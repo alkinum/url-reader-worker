@@ -14,6 +14,10 @@ Please using WAF / Rules on Cloudflare to secure your worker because it can acce
 
 If you want to add some extra logic to block some evil requests, please fork it and modify the code.
 
+## Inspired by
+
+[jina-ai/reader](https://github.com/jina-ai/reader)
+
 ## License
 
 Apache-2.0
