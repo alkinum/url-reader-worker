@@ -1,13 +1,15 @@
 import { parse } from 'cookie-es';
-import TurndownService from 'turndown';
 import { extractText } from 'unpdf';
 
+import TurndownService from '@backrunner/turndown';
 import puppeteer from '@cloudflare/puppeteer';
 import { Readability } from '@mozilla/readability';
 
 import { REQUEST_HEADERS } from './constants/common';
 import { ERROR_CODE } from './constants/errors';
 import { createErrorResponse, createFetchResponse } from './utils/response';
+import { EXECUTE_SNAPSHOT, INJECT_FUNCS, READABILITY_JS } from './static/readability';
+import { PageSnapshot } from './types';
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -40,9 +42,14 @@ export default {
 			},
 		});
 
-		const contentType = headRes.headers.get('Content-Type') || '';
+		let contentType = headRes.headers.get('Content-Type') || '';
 		if (/^(video|audio|(application\/octet-stream))/.test(contentType)) {
 			return createErrorResponse('Unsupported content type', ERROR_CODE.UNSUPPORTED_CONTENT, { status: 400 });
+		}
+
+		if (contentType.includes(';')) {
+			// there's header value like "text/html; charset=utf-8"
+			contentType = contentType.split(';')[0];
 		}
 
 		switch (contentType.toLowerCase().trim()) {
@@ -50,7 +57,6 @@ export default {
 				// use puppeteer to render html
 				const browser = await puppeteer.launch(env.READER_BROWSER as any);
 				const page = await browser.newPage();
-				page.setCacheEnabled(true);
 
 				const cookie = request.headers.get('Cookie');
 				if (cookie) {
@@ -62,21 +68,51 @@ export default {
 					page.setCookie(...pageCookies);
 				}
 
-				await page.goto(targetUrl);
-				const html = await page.content();
-				await browser.close();
+				await Promise.all([
+					page.setBypassCSP(true),
+					page.setCacheEnabled(true),
+					page.evaluateOnNewDocument(READABILITY_JS),
+					page.evaluateOnNewDocument(INJECT_FUNCS),
+					page.exposeFunction('reportSnapshot', (snapshot: PageSnapshot) => {
+						if (snapshot.href === 'about:blank') {
+							return;
+						}
+						page.emit('snapshot', snapshot);
+					}),
+				]);
 
-				let returnContent = html.trim();
 
-				if (mode === 'markdown') {
-					const turndown = new TurndownService();
-					returnContent = turndown.turndown(returnContent);
-				} else if (['body', 'text'].includes(mode || '')) {
-					const parsed = new Readability(returnContent).parse();
-					if (!parsed) {
-						return createErrorResponse('Invalid fetch response', ERROR_CODE.INVALID_FETCH_RES, { status: 500 });
+				await page.goto('about:blank', { waitUntil: 'domcontentloaded' });
+				await page.evaluateOnNewDocument(EXECUTE_SNAPSHOT);
+
+				page.goto(targetUrl, { waitUntil: ['load', 'domcontentloaded', 'networkidle0'], timeout: 30 * 1000 });
+
+				const snapshot = await Promise.race([
+					new Promise((resolve) => {
+						(page as any).on('snapshot', (snapshot: PageSnapshot) => {
+							resolve(snapshot);
+						});
+					}),
+					new Promise((resolve) => { setTimeout(resolve, 30 * 1000) }),
+				]) as PageSnapshot | undefined;
+
+				if (!snapshot) {
+					return createErrorResponse('Snapshot timeout', ERROR_CODE.SNAPSHOT_TIMEOUT, { status: 500 });
+				}
+
+				let returnContent = '' as string | undefined;
+
+				if (mode) {
+					if (mode === 'markdown') {
+						const turndown = new TurndownService();
+						returnContent = turndown.turndown(snapshot.html);
+					} else {
+						returnContent = mode === 'body' ? snapshot.parsed?.content : snapshot.parsed?.textContent;
 					}
-					returnContent = mode === 'body' ? parsed.content : parsed.textContent;
+				}
+
+				if (!returnContent) {
+					return createErrorResponse('No parsed content', ERROR_CODE.PARSE_FAILED, { status: 500 });
 				}
 
 				const res = createFetchResponse(
@@ -88,7 +124,7 @@ export default {
 					}),
 					env
 				);
-				ctx.waitUntil(caches.default.put(request, res));
+				ctx.waitUntil(caches.default.put(request, res.clone()));
 				return res;
 			}
 			case 'application/pdf': {
@@ -101,7 +137,7 @@ export default {
 				const pdf = await fetchRes.arrayBuffer();
 				const { text } = await extractText(pdf, { mergePages: true });
 				const res = createFetchResponse(new Response(Array.isArray(text) ? text.join('\n') : text, { status: 200 }), env);
-				ctx.waitUntil(caches.default.put(request, res));
+				ctx.waitUntil(caches.default.put(request, res.clone()));
 				return res;
 			}
 			default: {
@@ -113,7 +149,7 @@ export default {
 				});
 				const res = createFetchResponse(fetchRes as unknown as Response, env);
 				if (res.status === 200) {
-					ctx.waitUntil(caches.default.put(request, res));
+					ctx.waitUntil(caches.default.put(request, res.clone()));
 				}
 				return res;
 			}
