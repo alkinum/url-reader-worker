@@ -1,6 +1,6 @@
 # url-reader-worker
 
-An URL reader like `jina-ai/reader` for AI Agents which can be deployed very easily as a Cloudflare worker.
+An URL reader like `jina-ai/reader` for AI Agents which can be deployed very easily as a Cloudflare Worker.
 
 ## Usage
 
