@@ -12,9 +12,19 @@ A url reader for AI Agents which can be deployed very easily as a Cloudflare wor
 npm run deploy
 ```
 
-### Request
+### Params
 
+`[YOUR_WORKER_URL]?target={targetUrl}&mode={mode}`
 
+- `targetUrl`: URL of the target page, read image / audio / video directly is not supported.
+
+- `mode` (optional): Could be "markdown", "body". As for `markdown` mode, if the original content is `text/html`, it will be formatted into a human-readable markdown format text. As for `body` mode, it will return the body part of the page. Otherwise, the worker will return the original rendered HTML text.
+
+### Env
+
+- `CACHE_CONTROL`: Response cache control which follows Cloudflare's rules.
+- `BROWSER_TIMEOUT`: General timeout for puppeteer.
+- `FETCH_CACHE_TTL`: General ttl for caching HEAD and GET requests to original content.
 
 ### Security
 
