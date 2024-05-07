@@ -17,7 +17,7 @@ export const createFetchResponse = (res: Response, env?: Env) => {
 	return new Response(cloned.body, {
 		...cloned,
 		headers: {
-			...cloned.headers,
+			...Object.fromEntries(cloned.headers.entries()),
 			'Cache-Control': env?.CACHE_CONTROL || 'max-age=600',
 			'Expires': '',
 			'Last-Modified': '',

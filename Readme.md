@@ -1,10 +1,18 @@
 # url-reader-worker
 
-A url reader for AI on Cloudflare worker.
+A url reader for AI Agents which can be deployed very easily as a Cloudflare worker.
 
 ## Usage
 
 **IMPORTANT: You need Worker Paid plan to use this worker due to the limitation of Browser ability.**
+
+### Deploy
+
+```bash
+npm run deploy
+```
+
+### Request
 
 
 

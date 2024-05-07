@@ -4,11 +4,13 @@ import { extractText } from 'unpdf';
 import TurndownService from '@backrunner/turndown';
 import puppeteer, { Browser } from '@cloudflare/puppeteer';
 
-import { REQUEST_HEADERS } from './constants/common';
+import { DEFAULT_FETCH_CACHE_TTL, DEFAULT_TIMEOUT, REQUEST_HEADERS } from './constants/common';
 import { ERROR_CODE } from './constants/errors';
-import { createErrorResponse, createFetchResponse } from './utils/response';
 import { EXECUTE_SNAPSHOT, INJECT_FUNCS, READABILITY_JS } from './static/scripts';
-import { PageSnapshot } from './types';
+import { ImgBrief, PageSnapshot } from './types';
+import { cleanAttribute } from './utils/crawler';
+import { tidyMarkdown } from './utils/markdown';
+import { createErrorResponse, createFetchResponse } from './utils/response';
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -39,6 +41,10 @@ export default {
 			headers: {
 				...requestHeaders,
 			},
+			cf: {
+				cacheKey: `HEAD_${targetUrl}`,
+				cacheTtl: env.FETCH_CACHE_TTL || DEFAULT_FETCH_CACHE_TTL,
+			},
 		});
 
 		let contentType = headRes.headers.get('Content-Type') || '';
@@ -55,11 +61,11 @@ export default {
 			case 'text/html': {
 				// use puppeteer to render html
 				const sessionId = await this.getRandomSession(env.READER_BROWSER as any);
-				
+
 				let browser: Browser | undefined;
-				
+
 				if (sessionId) {
-				 	try {
+					try {
 						browser = await puppeteer.connect(env.READER_BROWSER as any, sessionId);
 					} catch (error) {
 						console.log(`Failed to connect to ${sessionId}. Error ${error}`);
@@ -71,6 +77,7 @@ export default {
 
 				const page = await browser.newPage();
 
+				// passthrough the cookie in the request
 				const cookie = request.headers.get('Cookie');
 				if (cookie) {
 					const parsed = parse(cookie);
@@ -97,7 +104,9 @@ export default {
 				await page.goto('about:blank', { waitUntil: 'domcontentloaded' });
 				await page.evaluateOnNewDocument(EXECUTE_SNAPSHOT);
 
-				page.goto(targetUrl, { waitUntil: ['load', 'domcontentloaded', 'networkidle0'], timeout: 30 * 1000 });
+				const getTimeout = () => env.BROWSER_TIMEOUT || DEFAULT_TIMEOUT;
+
+				page.goto(targetUrl, { waitUntil: ['load', 'domcontentloaded', 'networkidle0'], timeout: getTimeout() });
 
 				const snapshot = (await Promise.race([
 					new Promise((resolve) => {
@@ -106,24 +115,69 @@ export default {
 						});
 					}),
 					new Promise((resolve) => {
-						setTimeout(resolve, 30 * 1000);
+						setTimeout(resolve, getTimeout());
 					}),
 				])) as PageSnapshot | undefined;
 
 				await page.close();
 				browser.disconnect();
 
-				if (!snapshot) {
+				if (!snapshot?.html) {
 					return createErrorResponse('Snapshot timeout', ERROR_CODE.SNAPSHOT_TIMEOUT, { status: 500 });
 				}
 
-				let returnContent = '' as string | undefined;
+				let returnContent = snapshot.html as string | undefined;
 
 				if (mode) {
 					if (mode === 'markdown') {
+						// init turndown
 						const turndown = new TurndownService();
-						returnContent = turndown.turndown(snapshot.html);
+						turndown.addRule('remove-irrelevant', {
+							filter: ['meta', 'style', 'script', 'noscript', 'link', 'textarea'],
+							replacement: () => '',
+						});
+						turndown.addRule('title-as-h1', {
+							filter: ['title'],
+							replacement: (innerText) => `${innerText}\n===============\n`,
+						});
+
+						// get alt text
+						const urlToAltMap: { [k: string]: string | undefined } = {};
+						if (snapshot.imgs?.length) {
+							const tasks = (snapshot.imgs || []).map(async (x) => {
+								const r = await this.getAltText(x).catch((err: any) => {
+									console.error('Failed to get alt text', err);
+									return undefined;
+								});
+								if (r && x.src) {
+									urlToAltMap[x.src.trim()] = r;
+								}
+							});
+
+							await Promise.all(tasks);
+						}
+						let imgIdx = 0;
+						turndown.addRule('img-generated-alt', {
+							filter: 'img',
+							replacement: (_content, node) => {
+								const src = (node.getAttribute('src') || '').trim();
+								const alt = cleanAttribute(node.getAttribute('alt'));
+								if (!src) {
+									return '';
+								}
+								const mapped = urlToAltMap[src];
+								imgIdx++;
+								if (mapped) {
+									return `![Image ${imgIdx}: ${mapped || alt}](${src})`;
+								}
+								return alt ? `![Image ${imgIdx}: ${alt}](${src})` : `![Image ${imgIdx}](${src})`;
+							},
+						});
+
+						// convert to markdown
+						returnContent = tidyMarkdown(turndown.turndown(snapshot.html));
 					} else {
+						// just return parsed html content
 						returnContent = mode === 'body' ? snapshot.parsed?.content : snapshot.parsed?.textContent;
 					}
 				}
@@ -136,7 +190,7 @@ export default {
 					new Response(returnContent, {
 						status: 200,
 						headers: {
-							'Content-Type': mode === 'markdown' ? 'text/markdown' : 'text/html',
+							'Content-Type': `${mode === 'markdown' ? 'text/markdown' : 'text/html'}; charset=utf-8`,
 						},
 					}),
 					env
@@ -149,6 +203,10 @@ export default {
 					method: 'GET',
 					headers: {
 						...requestHeaders,
+					},
+					cf: {
+						cacheKey: `GET_${targetUrl}`,
+						cacheTtl: env.FETCH_CACHE_TTL || DEFAULT_FETCH_CACHE_TTL,
 					},
 				});
 				const pdf = await fetchRes.arrayBuffer();
@@ -163,6 +221,10 @@ export default {
 					headers: {
 						...requestHeaders,
 					},
+					cf: {
+						cacheKey: `GET_${targetUrl}`,
+						cacheTtl: env.FETCH_CACHE_TTL || DEFAULT_FETCH_CACHE_TTL,
+					},
 				});
 				const res = createFetchResponse(fetchRes as unknown as Response, env);
 				if (res.status === 200) {
@@ -172,6 +234,7 @@ export default {
 			}
 		}
 	},
+
 	async getRandomSession(endpoint: puppeteer.BrowserWorker): Promise<string | undefined> {
 		const sessions: puppeteer.ActiveSession[] = await puppeteer.sessions(endpoint);
 
@@ -191,4 +254,11 @@ export default {
 
 		return sessionId!;
 	},
+
+	async getAltText(imgBrief: ImgBrief) {
+		if (imgBrief.alt) {
+			return imgBrief.alt;
+		}
+		return undefined;
+	}
 };
