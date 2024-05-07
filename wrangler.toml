@@ -20,6 +20,7 @@ mode = "smart"
 CACHE_CONTROL = "max-age=600"
 BROWSER_TIMEOUT = 30000
 FETCH_CACHE_TTL = 300
+AUTH_KEY = ""
 
 # Bind the Workers AI model catalog. Run machine learning models, powered by serverless GPUs, on Cloudflare’s global network
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#workers-ai

@@ -15,6 +15,14 @@ import { createErrorResponse, createFetchResponse } from './utils/response';
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const parsedIncoming = new URL(request.url);
+		
+		// check auth
+		if (env.AUTH_KEY) {
+			if (parsedIncoming.searchParams.get('auth') !== env.AUTH_KEY) {
+				return createErrorResponse('Unauthorized', ERROR_CODE.INVALID_AUTH_KEY, { status: 401 });
+			}
+		}
+		
 		const targetUrl = decodeURIComponent(parsedIncoming.searchParams.get('target') || '').trim();
 		const mode = parsedIncoming.searchParams.get('mode');
 
