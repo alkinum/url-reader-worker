@@ -2,13 +2,12 @@ import { parse } from 'cookie-es';
 import { extractText } from 'unpdf';
 
 import TurndownService from '@backrunner/turndown';
-import puppeteer from '@cloudflare/puppeteer';
-import { Readability } from '@mozilla/readability';
+import puppeteer, { Browser } from '@cloudflare/puppeteer';
 
 import { REQUEST_HEADERS } from './constants/common';
 import { ERROR_CODE } from './constants/errors';
 import { createErrorResponse, createFetchResponse } from './utils/response';
-import { EXECUTE_SNAPSHOT, INJECT_FUNCS, READABILITY_JS } from './static/readability';
+import { EXECUTE_SNAPSHOT, INJECT_FUNCS, READABILITY_JS } from './static/scripts';
 import { PageSnapshot } from './types';
 
 export default {
@@ -55,7 +54,21 @@ export default {
 		switch (contentType.toLowerCase().trim()) {
 			case 'text/html': {
 				// use puppeteer to render html
-				const browser = await puppeteer.launch(env.READER_BROWSER as any);
+				const sessionId = await this.getRandomSession(env.READER_BROWSER as any);
+				
+				let browser: Browser | undefined;
+				
+				if (sessionId) {
+				 	try {
+						browser = await puppeteer.connect(env.READER_BROWSER as any, sessionId);
+					} catch (error) {
+						console.log(`Failed to connect to ${sessionId}. Error ${error}`);
+					}
+				}
+				if (!browser) {
+					browser = await puppeteer.launch(env.READER_BROWSER as any);
+				}
+
 				const page = await browser.newPage();
 
 				const cookie = request.headers.get('Cookie');
@@ -81,20 +94,24 @@ export default {
 					}),
 				]);
 
-
 				await page.goto('about:blank', { waitUntil: 'domcontentloaded' });
 				await page.evaluateOnNewDocument(EXECUTE_SNAPSHOT);
 
 				page.goto(targetUrl, { waitUntil: ['load', 'domcontentloaded', 'networkidle0'], timeout: 30 * 1000 });
 
-				const snapshot = await Promise.race([
+				const snapshot = (await Promise.race([
 					new Promise((resolve) => {
 						(page as any).on('snapshot', (snapshot: PageSnapshot) => {
 							resolve(snapshot);
 						});
 					}),
-					new Promise((resolve) => { setTimeout(resolve, 30 * 1000) }),
-				]) as PageSnapshot | undefined;
+					new Promise((resolve) => {
+						setTimeout(resolve, 30 * 1000);
+					}),
+				])) as PageSnapshot | undefined;
+
+				await page.close();
+				browser.disconnect();
 
 				if (!snapshot) {
 					return createErrorResponse('Snapshot timeout', ERROR_CODE.SNAPSHOT_TIMEOUT, { status: 500 });
@@ -154,5 +171,24 @@ export default {
 				return res;
 			}
 		}
+	},
+	async getRandomSession(endpoint: puppeteer.BrowserWorker): Promise<string | undefined> {
+		const sessions: puppeteer.ActiveSession[] = await puppeteer.sessions(endpoint);
+
+		const sessionsIds = sessions
+			.filter((v) => {
+				return !v.connectionId; // remove sessions with workers connected to them
+			})
+			.map((v) => {
+				return v.sessionId;
+			});
+
+		if (sessionsIds.length === 0) {
+			return;
+		}
+
+		const sessionId = sessionsIds[Math.floor(Math.random() * sessionsIds.length)];
+
+		return sessionId!;
 	},
 };

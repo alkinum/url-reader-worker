@@ -71,5 +71,4 @@ const handlePageLoad = () => {
 };
 document.addEventListener('readystatechange', handlePageLoad);
 document.addEventListener('load', handlePageLoad);
-`.trim;
-
+`.trim();
