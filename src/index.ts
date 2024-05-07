@@ -18,7 +18,7 @@ export default {
 		
 		// check auth
 		if (env.AUTH_KEY) {
-			if (parsedIncoming.searchParams.get('auth') !== env.AUTH_KEY) {
+			if (parsedIncoming.searchParams.get('auth_key') !== env.AUTH_KEY) {
 				return createErrorResponse('Unauthorized', ERROR_CODE.INVALID_AUTH_KEY, { status: 401 });
 			}
 		}
