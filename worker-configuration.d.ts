@@ -2,9 +2,9 @@
 // by running `wrangler types`
 
 interface Env {
-	CACHE_CONTROL: "max-age=600";
-	BROWSER_TIMEOUT: 30000;
-	FETCH_CACHE_TTL: 300;
-	AUTH_KEY: "";
-	READER_BROWSER: Fetcher;
+  CACHE_CONTROL: 'max-age=600';
+  BROWSER_TIMEOUT: 30000;
+  FETCH_CACHE_TTL: 300;
+  AUTH_KEY: '';
+  READER_BROWSER: Fetcher;
 }
