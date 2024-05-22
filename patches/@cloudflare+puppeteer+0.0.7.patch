@@ -1,0 +1,82 @@
+diff --git a/node_modules/@cloudflare/puppeteer/lib/esm/puppeteer/common/Puppeteer.d.ts b/node_modules/@cloudflare/puppeteer/lib/esm/puppeteer/common/Puppeteer.d.ts
+index cfc8a32..df7a25e 100644
+--- a/node_modules/@cloudflare/puppeteer/lib/esm/puppeteer/common/Puppeteer.d.ts
++++ b/node_modules/@cloudflare/puppeteer/lib/esm/puppeteer/common/Puppeteer.d.ts
+@@ -13,6 +13,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
++import { BrowserWorker } from '@cloudflare/puppeteer';
+ import { Browser } from './Browser.js';
+ import { BrowserConnectOptions } from './BrowserConnector.js';
+ import { ConnectionTransport } from './ConnectionTransport.js';
+@@ -61,7 +62,7 @@ export declare class Puppeteer {
+      * @param options - Set of configurable options to set on the browser.
+      * @returns Promise which resolves to browser instance.
+      */
+-    connect(options: ConnectOptions): Promise<Browser>;
++    connect(endpoint: BrowserWorker, sessionId: string, options?: ConnectOptions): Promise<Browser>;
+     /**
+      * @deprecated Import directly puppeteer.
+      * @example
+diff --git a/node_modules/@cloudflare/puppeteer/lib/esm/puppeteer/puppeteer-core.d.ts b/node_modules/@cloudflare/puppeteer/lib/esm/puppeteer/puppeteer-core.d.ts
+index b68a2ed..cd6957a 100644
+--- a/node_modules/@cloudflare/puppeteer/lib/esm/puppeteer/puppeteer-core.d.ts
++++ b/node_modules/@cloudflare/puppeteer/lib/esm/puppeteer/puppeteer-core.d.ts
+@@ -15,7 +15,7 @@
+  */
+ import { Browser } from './common/Browser.js';
+ import { BrowserWorker } from './common/BrowserWorker.js';
+-import { Puppeteer } from './common/Puppeteer.js';
++import { ConnectOptions, Puppeteer } from './common/Puppeteer.js';
+ export * from './common/NetworkConditions.js';
+ export * from './common/QueryHandler.js';
+ export * from './common/DeviceDescriptors.js';
+@@ -57,7 +57,7 @@ export interface LimitsResponse {
+     allowedBrowserAcquisitions: number;
+     timeUntilNextAllowedBrowserAcquisition: number;
+ }
+-export interface LaunchOptions {
++export interface LaunchOptions extends ConnectOptions {
+     keep_alive?: number;
+ }
+ declare class PuppeteerWorkers extends Puppeteer {
+@@ -100,9 +100,9 @@ declare class PuppeteerWorkers extends Puppeteer {
+      * @param sessionId - sessionId obtained from a .sessions() call
+      * @returns a browser instance
+      */
+-    connect(endpoint: BrowserWorker, sessionId: string): Promise<Browser>;
++    connect(endpoint: BrowserWorker, sessionId: string, options?: ConnectOptions): Promise<Browser>;
+ }
+ declare const puppeteer: PuppeteerWorkers;
+ export default puppeteer;
+-export declare const connect: (endpoint: BrowserWorker, sessionId: string) => Promise<Browser>, launch: (endpoint: BrowserWorker, options?: LaunchOptions) => Promise<Browser>, sessions: (endpoint: BrowserWorker) => Promise<ActiveSession[]>, history: (endpoint: BrowserWorker) => Promise<ClosedSession[]>, limits: (endpoint: BrowserWorker) => Promise<LimitsResponse>;
++export declare const connect: (endpoint: BrowserWorker, sessionId: string, options?: ConnectOptions) => Promise<Browser>, launch: (endpoint: BrowserWorker, options?: LaunchOptions) => Promise<Browser>, sessions: (endpoint: BrowserWorker) => Promise<ActiveSession[]>, history: (endpoint: BrowserWorker) => Promise<ClosedSession[]>, limits: (endpoint: BrowserWorker) => Promise<LimitsResponse>;
+ //# sourceMappingURL=puppeteer-core.d.ts.map
+\ No newline at end of file
+diff --git a/node_modules/@cloudflare/puppeteer/lib/esm/puppeteer/puppeteer-core.js b/node_modules/@cloudflare/puppeteer/lib/esm/puppeteer/puppeteer-core.js
+index 1023e98..46737bf 100644
+--- a/node_modules/@cloudflare/puppeteer/lib/esm/puppeteer/puppeteer-core.js
++++ b/node_modules/@cloudflare/puppeteer/lib/esm/puppeteer/puppeteer-core.js
+@@ -47,7 +47,7 @@ class PuppeteerWorkers extends Puppeteer {
+         }
+         // Got a 200, so response text is actually an AcquireResponse
+         const response = JSON.parse(text);
+-        return this.connect(endpoint, response.sessionId);
++        return this.connect(endpoint, response.sessionId, options);
+     }
+     /**
+      * Returns active sessions
+@@ -109,10 +109,10 @@ class PuppeteerWorkers extends Puppeteer {
+      */
+     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+     // @ts-ignore
+-    async connect(endpoint, sessionId) {
++    async connect(endpoint, sessionId, options) {
+         try {
+             const transport = await WorkersWebSocketTransport.create(endpoint, sessionId);
+-            return super.connect({ transport, sessionId: sessionId });
++            return super.connect({ transport, sessionId: sessionId, ...options });
+         }
+         catch (e) {
+             throw new Error(`Unable to connect to existing session ${sessionId} (it may still be in use or not ready yet) - retry or launch a new browser: ${e}`);

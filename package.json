@@ -13,7 +13,7 @@
     "cf-typegen": "wrangler types"
   },
   "devDependencies": {
-    "@cloudflare/puppeteer": "^0.0.7",
+    "@cloudflare/puppeteer": "0.0.7",
     "@cloudflare/workers-types": "^4.20240502.0",
     "rimraf": "^5.0.5",
     "typescript": "^5.0.4",
@@ -23,6 +23,7 @@
     "@backrunner/turndown": "^7.2.3",
     "@mozilla/readability": "^0.5.0",
     "cookie-es": "^1.1.0",
+    "puppeteer-afp": "^1.1.6",
     "unpdf": "^0.10.1"
   }
 }

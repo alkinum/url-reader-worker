@@ -1,10 +1,11 @@
 import { parse } from 'cookie-es';
 import { extractText } from 'unpdf';
+import { protectPage } from 'puppeteer-afp'; 
 
 import TurndownService from '@backrunner/turndown';
 import puppeteer, { Browser } from '@cloudflare/puppeteer';
 
-import { DEFAULT_FETCH_CACHE_TTL, DEFAULT_TIMEOUT, REQUEST_HEADERS } from './constants/common';
+import { DEFAULT_BROWSER_USER_AGENT, DEFAULT_FETCH_CACHE_TTL, DEFAULT_TIMEOUT, REQUEST_HEADERS } from './constants/common';
 import { ERROR_CODE } from './constants/errors';
 import { EXECUTE_SNAPSHOT, INJECT_FUNCS, READABILITY_JS } from './static/scripts';
 import { ImgBrief, PageSnapshot } from './types';
@@ -79,6 +80,7 @@ export default {
             console.log(`Failed to connect to ${sessionId}. Error ${error}`);
           }
         }
+
         if (!browser) {
           browser = await puppeteer.launch(env.READER_BROWSER as any);
         }
@@ -96,11 +98,20 @@ export default {
           page.setCookie(...pageCookies);
         }
 
+        const getTimeout = () => env.BROWSER_TIMEOUT || DEFAULT_TIMEOUT;
+
         await Promise.all([
           page.setBypassCSP(true),
           page.setCacheEnabled(true),
+          page.setUserAgent(env.BROWSER_USER_AGENT || DEFAULT_BROWSER_USER_AGENT),
+          page.setDefaultTimeout(getTimeout()),
           page.evaluateOnNewDocument(READABILITY_JS),
           page.evaluateOnNewDocument(INJECT_FUNCS),
+          page.setViewport({
+            width: 1920,
+            height: 1080,
+          }),
+          protectPage(page),
           page.exposeFunction('reportSnapshot', (snapshot: PageSnapshot) => {
             if (snapshot.href === 'about:blank') {
               return;
@@ -111,8 +122,6 @@ export default {
 
         await page.goto('about:blank', { waitUntil: 'domcontentloaded' });
         await page.evaluateOnNewDocument(EXECUTE_SNAPSHOT);
-
-        const getTimeout = () => env.BROWSER_TIMEOUT || DEFAULT_TIMEOUT;
 
         page.goto(targetUrl, { waitUntil: ['load', 'domcontentloaded', 'networkidle0'], timeout: getTimeout() });
 
