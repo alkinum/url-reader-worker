@@ -3,7 +3,7 @@ declare module 'puppeteer-afp' {
 
   interface Options {
     canvasRgba?: number[];
-    webglData?: { [key: string]: number | string };
+    webglData?: { [key: string]: number | string | number[] | Record<string, number> };
     fontFingerprint?: {
       noise: number;
       sign: number;

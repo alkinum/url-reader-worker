@@ -7,40 +7,41 @@ function briefImgs(elem) {
 	const imageTags = Array.from((elem || document).querySelectorAll('img[src]'));
 
 	return imageTags.map((x)=> ({
-			src: x.src,
-			loaded: x.complete,
-			width: x.width,
-			height: x.height,
-			naturalWidth: x.naturalWidth,
-			naturalHeight: x.naturalHeight,
-			alt: x.alt || x.title,
+		src: x.src,
+		loaded: x.complete,
+		width: x.width,
+		height: x.height,
+		naturalWidth: x.naturalWidth,
+		naturalHeight: x.naturalHeight,
+		alt: x.alt || x.title,
 	}));
 }
 function giveSnapshot() {
 	let parsed;
+
 	try {
-			parsed = new Readability(document.cloneNode(true)).parse();
+		parsed = new Readability(document.cloneNode(true)).parse();
 	} catch (err) {
-			void 0;
+		void 0;
 	}
 
 	const r = {
-			title: document.title,
-			href: document.location.href,
-			html: document.documentElement?.outerHTML,
-			text: document.body?.innerText,
-			parsed: parsed,
-			imgs: [],
+		title: document.title,
+		href: document.location.href,
+		html: document.documentElement?.outerHTML,
+		text: document.body?.innerText,
+		parsed: parsed,
+		imgs: [],
 	};
 	if (parsed && parsed.content) {
-			const elem = document.createElement('div');
-			elem.innerHTML = parsed.content;
-			r.imgs = briefImgs(elem);
+		const elem = document.createElement('div');
+		elem.innerHTML = parsed.content;
+		r.imgs = briefImgs(elem);
 	} else {
-			const allImgs = briefImgs();
-			if (allImgs.length === 1) {
-					r.imgs = allImgs;
-			}
+		const allImgs = briefImgs();
+		if (allImgs.length === 1) {
+			r.imgs = allImgs;
+		}
 	}
 
 	return r;
@@ -49,27 +50,109 @@ function giveSnapshot() {
 
 export const EXECUTE_SNAPSHOT = `
 let aftershot = undefined;
+
 const handlePageLoad = () => {
-    if (window.haltSnapshot) {
-        return;
+  if (document.readyState !== 'complete') {
+    return;
+  }
+  const parsed = giveSnapshot();
+  window.reportSnapshot(parsed);
+  if (!parsed.text) {
+    if (aftershot) {
+      clearTimeout(aftershot);
     }
-    if (document.readyState !== 'complete') {
-        return;
-    }
-    const parsed = giveSnapshot();
-    window.reportSnapshot(parsed);
-    if (!parsed.text) {
-        if (aftershot) {
-            clearTimeout(aftershot);
-        }
-        aftershot = setTimeout(() => {
-            const r = giveSnapshot();
-            if (r && r.text) {
-                window.reportSnapshot(r);
-            }
-        }, 500);
-    }
+    aftershot = setTimeout(() => {
+    const r = giveSnapshot();
+      if (r && r.text) {
+        window.reportSnapshot(r);
+      }
+    }, 500);
+  }
 };
+
 document.addEventListener('readystatechange', handlePageLoad);
 document.addEventListener('load', handlePageLoad);
 `.trim();
+
+export const WORKER_PROTECTION = `
+function isDevToolsScript() {
+	var stack = new Error().stack;
+	return stack.includes('devtool');
+}
+
+Date.prototype.originalGetTime = Date.prototype.getTime;
+Date.prototype.getTime = function () {
+	if (!isDevToolsScript()) {
+		return this.originalGetTime();
+	}
+	return 0;
+}
+
+const originalOnMessageSetter = Object.getOwnPropertyDescriptor(Worker.prototype, 'onmessage').set;
+Object.defineProperty(Worker.prototype, 'onmessage', {
+	set: function (fn) {
+			if (!isDevToolsScript()) {
+					originalOnMessageSetter.call(this, fn);
+					return;
+			}
+			newFn = (ev) => {
+					ev.data.time = 0;
+					fn(ev);
+			}
+			originalOnMessageSetter.call(this, newFn);
+	}
+});`.trim();
+
+export const TURNSTILE_SOLVER = `
+(function() {
+	async function clickTurnstile() {
+		const delay = async (milliseconds) => await new Promise(resolve => setTimeout(resolve, milliseconds));
+
+		function simulateMouseClick(element, clientX = null, clientY = null) {
+			if (clientX === null || clientY === null) {
+				const box = element.getBoundingClientRect();
+				clientX = box.left + box.width / 2;
+				clientY = box.top + box.height / 2;
+			}
+
+			if (isNaN(clientX) || isNaN(clientY)) {
+				return;
+			}
+
+			// Send mouseover, mousedown, mouseup, click, mouseout
+			const eventNames = [
+				'mouseover',
+				'mouseenter',
+				'mousedown',
+				'mouseup',
+				'click',
+				'mouseout',
+			];
+
+			eventNames.forEach((eventName) => {
+				const detail = eventName === 'mouseover' ? 0 : 1;
+				const event = new MouseEvent(eventName, {
+					detail: detail,
+					view: window,
+					bubbles: true,
+					cancelable: true,
+					clientX: clientX,
+					clientY: clientY,
+				});
+				element.dispatchEvent(event);
+			});
+		}
+
+		while (true) {
+			await delay(100);
+
+			if (document.querySelector("#challenge-stage > div > label")) {
+				simulateMouseClick(document.querySelector("#challenge-stage > div > label"));
+			} else {
+				break;
+			}
+		}
+	}
+
+	clickTurnstile();
+})();`.trim();
