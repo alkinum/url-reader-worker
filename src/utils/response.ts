@@ -24,3 +24,13 @@ export const createFetchResponse = (res: Response, env?: Env) => {
     },
   });
 };
+
+export const checkResponseContent = (content: string) => {
+  if (
+    content.includes('This website is using a security service to protect itself from online attacks.') ||
+    content.includes('Verifying you are human.')
+  ) {
+    return false;
+  }
+  return true;
+};

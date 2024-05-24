@@ -17,7 +17,7 @@ import { EXECUTE_SNAPSHOT, INJECT_FUNCS, READABILITY_JS, TURNSTILE_SOLVER, WORKE
 import { ImgBrief, PageSnapshot } from './types';
 import { cleanAttribute } from './utils/crawler';
 import { tidyMarkdown } from './utils/markdown';
-import { createErrorResponse, createFetchResponse } from './utils/response';
+import { checkResponseContent, createErrorResponse, createFetchResponse } from './utils/response';
 import { STEALTH } from './static/stealth';
 
 export default {
@@ -165,7 +165,7 @@ export default {
         let finalWaitTime = 0;
 
         try {
-          await new Promise<void>(async (resolve, reject) => {
+          const earlyReturn = await new Promise<unknown | undefined>(async (resolve, reject) => {
             (page as any).on('snapshot', (shot: PageSnapshot) => {
               if (shot.html) snapshot = shot;
               if (finalResolve) {
@@ -205,22 +205,59 @@ export default {
               return reject(new Error('browser timeout'));
             }
 
-            if (
-              !snapshot.title ||
-              !snapshot.parsed?.content ||
-              snapshot.html.includes(
-                'This website is using a security service to protect itself from online attacks.',
-              ) ||
-              snapshot.html.includes('Verifying you are human.')
-            ) {
+            const getSalvaged = async () => {
               const salvaged = await salvage(targetUrl, page);
               if (salvaged) {
                 snapshot = (await page.evaluate('giveSnapshot()')) as PageSnapshot;
               }
             }
 
-            resolve();
+            const fallback = async () => {
+              const res = await fetch(`https://r.jina.ai/${targetUrl}`, {
+                headers: {
+                  'User-Agent': getUserAgent(),
+                },
+              });
+              if (res.ok) {
+                return await res.text();
+              }
+            }
+
+            if (
+              !snapshot.title ||
+              !snapshot.parsed?.content ||
+              !checkResponseContent(snapshot.html)
+            ) {
+              const earlyReturn = await Promise.race([getSalvaged(), fallback()]);
+              if (earlyReturn) {
+                resolve(earlyReturn);
+              }
+            }
+
+            resolve(undefined);
           });
+
+          if (earlyReturn) {
+            await page.close();
+            browser.disconnect();
+
+            const res = createFetchResponse(
+              new Response(earlyReturn as BodyInit, {
+                status: 200,
+                headers: {
+                  'Content-Type': `${mode === 'markdown' ? 'text/markdown' : 'text/html'}; charset=utf-8`,
+                },
+              }),
+              {
+                ...env,
+                CACHE_CONTROL: 'max-age=120' as any,
+              },
+            );
+
+            ctx.waitUntil(caches.default.put(request, res.clone()));
+            
+            return res;
+          }
         } catch {
           return createErrorResponse('Snapshot timeout', ERROR_CODE.SNAPSHOT_TIMEOUT, { status: 500 });
         }
@@ -325,7 +362,11 @@ export default {
           }),
           env,
         );
-        ctx.waitUntil(caches.default.put(request, res.clone()));
+
+        if (checkResponseContent(returnContent)) {
+          ctx.waitUntil(caches.default.put(request, res.clone()));
+        }
+        
         return res;
       }
       case 'application/pdf': {
