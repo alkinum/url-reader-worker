@@ -226,7 +226,7 @@ export default {
             if (
               !snapshot.title ||
               !snapshot.parsed?.content ||
-              !checkResponseContent(snapshot.html)
+              !checkResponseContent(targetUrl, snapshot.html)
             ) {
               const earlyReturn = await Promise.race([getSalvaged(), fallback()]);
               if (earlyReturn) {
@@ -363,7 +363,7 @@ export default {
           env,
         );
 
-        if (checkResponseContent(returnContent)) {
+        if (checkResponseContent(targetUrl, returnContent)) {
           ctx.waitUntil(caches.default.put(request, res.clone()));
         }
         
