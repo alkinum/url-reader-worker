@@ -15,9 +15,9 @@ import { ERROR_CODE } from './constants/errors';
 import { PROTECTION_OPTIONS } from './constants/protection';
 import { EXECUTE_SNAPSHOT, INJECT_FUNCS, READABILITY_JS, TURNSTILE_SOLVER, WORKER_PROTECTION } from './static/scripts';
 import { ImgBrief, PageSnapshot } from './types';
-import { cleanAttribute } from './utils/crawler';
+import { cleanAttribute, checkCfProtection } from './utils/crawler';
 import { tidyMarkdown } from './utils/markdown';
-import { checkResponseContent, createErrorResponse, createFetchResponse } from './utils/response';
+import { createErrorResponse, createFetchResponse } from './utils/response';
 import { STEALTH } from './static/stealth';
 
 export default {
@@ -147,7 +147,7 @@ export default {
             width: 1920,
             height: 1080,
           }),
-          // protectPage(page, PROTECTION_OPTIONS),
+          protectPage(page, PROTECTION_OPTIONS),
           page.exposeFunction('reportSnapshot', (snapshot: PageSnapshot) => {
             if (snapshot.href === 'about:blank') {
               return;
@@ -181,15 +181,15 @@ export default {
               timeout: getTimeout(),
             });
 
-            if (snapshot?.html.includes('_cf_chl_opt')) {
+            snapshot = (await page.evaluate('giveSnapshot()')) as PageSnapshot;
+            
+            if (snapshot?.html && !checkCfProtection(targetUrl, snapshot.html)){
               page.evaluate(TURNSTILE_SOLVER);
               await new Promise<void>((resolve) => {
                 setTimeout(() => {
                   resolve();
                 }, 15 * 1000);
               });
-              snapshot = (await page.evaluate('giveSnapshot()')) as PageSnapshot;
-            } else {
               snapshot = (await page.evaluate('giveSnapshot()')) as PageSnapshot;
             }
 
@@ -226,7 +226,7 @@ export default {
             if (
               !snapshot.title ||
               !snapshot.parsed?.content ||
-              !checkResponseContent(targetUrl, snapshot.html)
+              !checkCfProtection(targetUrl, snapshot.html)
             ) {
               const earlyReturn = await Promise.race([getSalvaged(), fallback()]);
               if (earlyReturn) {
@@ -363,7 +363,7 @@ export default {
           env,
         );
 
-        if (checkResponseContent(targetUrl, returnContent)) {
+        if (checkCfProtection(targetUrl, returnContent)) {
           ctx.waitUntil(caches.default.put(request, res.clone()));
         }
         
