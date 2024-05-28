@@ -12,7 +12,6 @@ import {
   DEFAULT_SALVAGE_USER_AGENT,
   DEFAULT_TIMEOUT,
   REQUEST_HEADERS,
-	SALVAGE_TIMEOUT,
 } from './constants/common';
 import { ERROR_CODE } from './constants/errors';
 import { PROTECTION_OPTIONS } from './constants/protection';
@@ -81,18 +80,65 @@ export default {
         // use puppeteer to render html
         const sessionId = await this.getRandomSession(env.READER_BROWSER as any);
 
+        const fallback = async () => {
+          try {
+            const res = await fetch(`https://r.jina.ai/${targetUrl}`, {
+              headers: {
+                'User-Agent': getUserAgent(),
+              },
+            });
+            if (res.ok) {
+              return await res.text();
+            }
+          } catch (error) {
+            console.error(error);
+          }
+        };
+
+        const earlyFallback = async () => {
+          const fallbackRet = await fallback();
+          if (fallbackRet) {
+            const res = createFetchResponse(
+              new Response(fallbackRet as BodyInit, {
+                status: 200,
+                headers: {
+                  'Content-Type': `${mode === 'markdown' ? 'text/markdown' : 'text/html'}; charset=utf-8`,
+                },
+              }),
+              {
+                ...env,
+                CACHE_CONTROL: 'max-age=120' as any,
+              },
+            );
+            ctx.waitUntil(caches.default.put(request, res.clone()));
+            return res;
+          }
+        };
+
         let browser: Browser | undefined;
 
         if (sessionId) {
           try {
             browser = await puppeteer.connect(env.READER_BROWSER as any, sessionId);
           } catch (error) {
-            console.log(`Failed to connect to ${sessionId}. Error ${error}`);
+            console.error(`Failed to connect to ${sessionId}. Error ${error}`);
+            const res = await earlyFallback();
+            if (res) return res;
           }
         }
 
         if (!browser) {
-          browser = await puppeteer.launch(env.READER_BROWSER as any);
+          try {
+            browser = await puppeteer.launch(env.READER_BROWSER as any);
+          } catch (error) {
+            console.error(error);
+            const res = await earlyFallback();
+            if (res) return res;
+          }
+        }
+
+        if (!browser) {
+          return createErrorResponse('Failed to launch browser', ERROR_CODE.BROWSER_FAILED, { status: 500 });
         }
 
         const page = await browser.newPage();
@@ -192,7 +238,7 @@ export default {
               await new Promise<void>((resolve) => {
                 setTimeout(() => {
                   resolve();
-                }, );
+                });
               });
               snapshot = (await page.evaluate('giveSnapshot()')) as PageSnapshot;
             }
@@ -213,47 +259,21 @@ export default {
               const salvaged = await salvage(targetUrl, page);
               if (salvaged) {
                 snapshot = (await page.evaluate('giveSnapshot()')) as PageSnapshot;
-              } else {
-                await new Promise((resolve) => {
-                  setTimeout(() => resolve, SALVAGE_TIMEOUT);
-                });
               }
-            };
-
-            const fallback = async () => {
-              try {
-                const res = await fetch(`https://r.jina.ai/${targetUrl}`, {
-                  headers: {
-                    'User-Agent': getUserAgent(),
-                  },
-                });
-                if (res.ok) {
-                  return await res.text();
-                } else {
-                  await new Promise((resolve) => {
-                    setTimeout(() => resolve, SALVAGE_TIMEOUT);
-                  });
-                }
-              } catch (error) {
-                console.error(error);
-                await new Promise((resolve) => {
-                  setTimeout(() => resolve, SALVAGE_TIMEOUT);
-                });
-              }
+              console.log('salvaged', salvaged);
             };
 
             const simulateScraper = async () => {
               const res = await fetch(targetUrl, {
                 headers: {
-                  'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+                  'User-Agent': targetUrl.includes('openai.com')
+                    ? 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.0; +https://openai.com/gptbot)'
+                    : 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
                 },
               });
               if (res.ok && res.headers.get('content-type')?.includes('text/html')) {
                 const html = await res.text();
                 if (!checkCfProtection(targetUrl, html)) {
-                  await new Promise((resolve) => {
-                    setTimeout(() => resolve, SALVAGE_TIMEOUT);
-                  });
                   return;
                 }
                 try {
@@ -269,22 +289,16 @@ export default {
                     });
                   });
                 } catch (error) {
-                  // delay it if error occurs
-                  await new Promise((resolve) => {
-                    setTimeout(() => resolve, SALVAGE_TIMEOUT);
-                  });
+                  console.error(error);
                 }
-              } else {
-                await new Promise((resolve) => {
-                  setTimeout(() => resolve, SALVAGE_TIMEOUT);
-                });
               }
             };
 
             if (!snapshot.title || !snapshot.parsed?.content || !checkCfProtection(targetUrl, snapshot.html)) {
-              const earlyReturn = await Promise.race([getSalvaged(), fallback(), simulateScraper()]);
-              if (earlyReturn) {
-                resolve(earlyReturn);
+              const earlyReturn = await Promise.allSettled([getSalvaged(), simulateScraper(), fallback()]);
+              const earlyReturnRes = earlyReturn.find((item) => item.status === 'fulfilled' && !!item.value);
+              if (earlyReturnRes) {
+                resolve(earlyReturnRes);
               }
             }
 

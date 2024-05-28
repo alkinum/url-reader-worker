@@ -7,7 +7,7 @@ export const checkCfProtection = (targetUrl: string, content: string) => {
   if (
     content.includes('This website is using a security service to protect itself from online attacks.') ||
     content.includes('Verifying you are human.') ||
-    content.includes('window._cf_chl_opt = {')
+    content.includes('window._cf_chl_opt')
   ) {
     return false;
   }
