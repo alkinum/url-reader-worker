@@ -80,6 +80,11 @@ export default {
         // use puppeteer to render html
         const sessionId = await this.getRandomSession(env.READER_BROWSER as any);
 
+				// settings getters
+        const getTimeout = () => env.BROWSER_TIMEOUT || DEFAULT_TIMEOUT;
+        const getUserAgent = () => env.BROWSER_USER_AGENT || DEFAULT_BROWSER_USER_AGENT;
+        const getSalvageUserAgent = () => env.SALVAGE_USER_AGENT || DEFAULT_SALVAGE_USER_AGENT;
+
         const fallback = async () => {
           try {
             const res = await fetch(`https://r.jina.ai/${targetUrl}`, {
@@ -154,11 +159,6 @@ export default {
           page.setCookie(...pageCookies);
         }
 
-        // settings getters
-        const getTimeout = () => env.BROWSER_TIMEOUT || DEFAULT_TIMEOUT;
-        const getUserAgent = () => env.BROWSER_USER_AGENT || DEFAULT_BROWSER_USER_AGENT;
-        const getSalvageUserAgent = () => env.SALVAGE_USER_AGENT || DEFAULT_SALVAGE_USER_AGENT;
-
         const salvage = async (targetUrl: string, page: Page) => {
           const googleArchiveUrl = `https://webcache.googleusercontent.com/search?q=cache:${encodeURIComponent(
             targetUrl,
@@ -178,7 +178,7 @@ export default {
               timeout: getTimeout(),
             });
           } catch (error) {
-            console.error('Error while salvaging', error);
+            console.error('Error occurs while salvaging:', error);
             return null;
           }
           return true;
@@ -260,7 +260,6 @@ export default {
               if (salvaged) {
                 snapshot = (await page.evaluate('giveSnapshot()')) as PageSnapshot;
               }
-              console.log('salvaged', salvaged);
             };
 
             const simulateScraper = async () => {
@@ -296,7 +295,7 @@ export default {
 
             if (!snapshot.title || !snapshot.parsed?.content || !checkCfProtection(targetUrl, snapshot.html)) {
               const earlyReturn = await Promise.allSettled([getSalvaged(), simulateScraper(), fallback()]);
-              const earlyReturnRes = earlyReturn.find((item) => item.status === 'fulfilled' && !!item.value);
+              const earlyReturnRes = earlyReturn.find((item: any) => item.status === 'fulfilled' && !!item.value);
               if (earlyReturnRes) {
                 resolve(earlyReturnRes);
               }
