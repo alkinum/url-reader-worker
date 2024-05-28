@@ -27,6 +27,8 @@ npm run deploy
 - `CACHE_CONTROL`: Response cache control which follows Cloudflare's rules.
 - `BROWSER_TIMEOUT`: General timeout for puppeteer.
 - `FETCH_CACHE_TTL`: General ttl for caching HEAD and GET requests to original content.
+- `BROWSER_USER_AGENT`: User-Agent string for puppeteer.
+- `SALVAGE_USER_AGENT`: User-Agent string for salvage fetching.
 - `AUTH_KEY`: A key to access the worker.
 
 ### Security
