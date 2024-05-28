@@ -10,3 +10,5 @@ export const DEFAULT_SALVAGE_USER_AGENT = 'Mozilla/5.0 AppleWebKit/537.36 (KHTML
 export const DEFAULT_TIMEOUT = 30 * 1000;
 
 export const DEFAULT_FETCH_CACHE_TTL = 5 * 60;
+
+export const SALVAGE_TIMEOUT = 15 * 1000;

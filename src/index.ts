@@ -12,6 +12,7 @@ import {
   DEFAULT_SALVAGE_USER_AGENT,
   DEFAULT_TIMEOUT,
   REQUEST_HEADERS,
+	SALVAGE_TIMEOUT,
 } from './constants/common';
 import { ERROR_CODE } from './constants/errors';
 import { PROTECTION_OPTIONS } from './constants/protection';
@@ -191,7 +192,7 @@ export default {
               await new Promise<void>((resolve) => {
                 setTimeout(() => {
                   resolve();
-                }, 15 * 1000);
+                }, );
               });
               snapshot = (await page.evaluate('giveSnapshot()')) as PageSnapshot;
             }
@@ -212,17 +213,32 @@ export default {
               const salvaged = await salvage(targetUrl, page);
               if (salvaged) {
                 snapshot = (await page.evaluate('giveSnapshot()')) as PageSnapshot;
+              } else {
+                await new Promise((resolve) => {
+                  setTimeout(() => resolve, SALVAGE_TIMEOUT);
+                });
               }
             };
 
             const fallback = async () => {
-              const res = await fetch(`https://r.jina.ai/${targetUrl}`, {
-                headers: {
-                  'User-Agent': getUserAgent(),
-                },
-              });
-              if (res.ok) {
-                return await res.text();
+              try {
+                const res = await fetch(`https://r.jina.ai/${targetUrl}`, {
+                  headers: {
+                    'User-Agent': getUserAgent(),
+                  },
+                });
+                if (res.ok) {
+                  return await res.text();
+                } else {
+                  await new Promise((resolve) => {
+                    setTimeout(() => resolve, SALVAGE_TIMEOUT);
+                  });
+                }
+              } catch (error) {
+                console.error(error);
+                await new Promise((resolve) => {
+                  setTimeout(() => resolve, SALVAGE_TIMEOUT);
+                });
               }
             };
 
@@ -235,6 +251,9 @@ export default {
               if (res.ok && res.headers.get('content-type')?.includes('text/html')) {
                 const html = await res.text();
                 if (!checkCfProtection(targetUrl, html)) {
+                  await new Promise((resolve) => {
+                    setTimeout(() => resolve, SALVAGE_TIMEOUT);
+                  });
                   return;
                 }
                 try {
@@ -250,9 +269,15 @@ export default {
                     });
                   });
                 } catch (error) {
-									// delay it if error occurs
-									await new Promise((resolve) => {setTimeout(() => resolve, 30 * 1000);})
-								}
+                  // delay it if error occurs
+                  await new Promise((resolve) => {
+                    setTimeout(() => resolve, SALVAGE_TIMEOUT);
+                  });
+                }
+              } else {
+                await new Promise((resolve) => {
+                  setTimeout(() => resolve, SALVAGE_TIMEOUT);
+                });
               }
             };
 
