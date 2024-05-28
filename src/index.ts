@@ -4,10 +4,12 @@ import { protectPage } from 'puppeteer-afp';
 
 import TurndownService from '@backrunner/turndown';
 import puppeteer, { Browser, Page } from '@cloudflare/puppeteer';
+import read from './utils/readability';
 
 import {
   DEFAULT_BROWSER_USER_AGENT,
   DEFAULT_FETCH_CACHE_TTL,
+  DEFAULT_SALVAGE_USER_AGENT,
   DEFAULT_TIMEOUT,
   REQUEST_HEADERS,
 } from './constants/common';
@@ -105,9 +107,10 @@ export default {
           page.setCookie(...pageCookies);
         }
 
+        // settings getters
         const getTimeout = () => env.BROWSER_TIMEOUT || DEFAULT_TIMEOUT;
-
         const getUserAgent = () => env.BROWSER_USER_AGENT || DEFAULT_BROWSER_USER_AGENT;
+        const getSalvageUserAgent = () => env.SALVAGE_USER_AGENT || DEFAULT_SALVAGE_USER_AGENT;
 
         const salvage = async (targetUrl: string, page: Page) => {
           const googleArchiveUrl = `https://webcache.googleusercontent.com/search?q=cache:${encodeURIComponent(
@@ -115,7 +118,7 @@ export default {
           )}`;
           const resp = await fetch(googleArchiveUrl, {
             headers: {
-              'User-Agent': getUserAgent(),
+              'User-Agent': getSalvageUserAgent(),
             },
           });
           resp.body?.cancel().catch(() => void 0);
@@ -182,8 +185,8 @@ export default {
             });
 
             snapshot = (await page.evaluate('giveSnapshot()')) as PageSnapshot;
-            
-            if (snapshot?.html && !checkCfProtection(targetUrl, snapshot.html)){
+
+            if (snapshot?.html && !checkCfProtection(targetUrl, snapshot.html)) {
               page.evaluate(TURNSTILE_SOLVER);
               await new Promise<void>((resolve) => {
                 setTimeout(() => {
@@ -210,7 +213,7 @@ export default {
               if (salvaged) {
                 snapshot = (await page.evaluate('giveSnapshot()')) as PageSnapshot;
               }
-            }
+            };
 
             const fallback = async () => {
               const res = await fetch(`https://r.jina.ai/${targetUrl}`, {
@@ -221,14 +224,40 @@ export default {
               if (res.ok) {
                 return await res.text();
               }
-            }
+            };
 
-            if (
-              !snapshot.title ||
-              !snapshot.parsed?.content ||
-              !checkCfProtection(targetUrl, snapshot.html)
-            ) {
-              const earlyReturn = await Promise.race([getSalvaged(), fallback()]);
+            const simulateScraper = async () => {
+              const res = await fetch(targetUrl, {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+                },
+              });
+              if (res.ok && res.headers.get('content-type')?.includes('text/html')) {
+                const html = await res.text();
+                if (!checkCfProtection(targetUrl, html)) {
+                  return;
+                }
+                try {
+                  snapshot = await new Promise((resolve, reject) => {
+                    read(html, function (err: any, article: any) {
+                      if (err || !article) return reject(err);
+                      resolve({
+                        title: article.title || '',
+                        text: article.text || '',
+                        html,
+                        href: article.url || '',
+                      });
+                    });
+                  });
+                } catch (error) {
+									// delay it if error occurs
+									await new Promise((resolve) => {setTimeout(() => resolve, 30 * 1000);})
+								}
+              }
+            };
+
+            if (!snapshot.title || !snapshot.parsed?.content || !checkCfProtection(targetUrl, snapshot.html)) {
+              const earlyReturn = await Promise.race([getSalvaged(), fallback(), simulateScraper()]);
               if (earlyReturn) {
                 resolve(earlyReturn);
               }
@@ -255,7 +284,7 @@ export default {
             );
 
             ctx.waitUntil(caches.default.put(request, res.clone()));
-            
+
             return res;
           }
         } catch {
@@ -366,7 +395,7 @@ export default {
         if (checkCfProtection(targetUrl, returnContent)) {
           ctx.waitUntil(caches.default.put(request, res.clone()));
         }
-        
+
         return res;
       }
       case 'application/pdf': {
