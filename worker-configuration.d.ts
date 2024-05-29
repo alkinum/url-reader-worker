@@ -8,5 +8,6 @@ interface Env {
 	BROWSER_USER_AGENT: string;
 	SALVAGE_USER_AGENT: string;
 	AUTH_KEY: string;
+	GOOGLE_WEB_CACHE_ENDPOINT: string;
 	READER_BROWSER: Fetcher;
 }

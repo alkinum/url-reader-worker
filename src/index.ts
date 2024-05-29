@@ -3,12 +3,13 @@ import { extractText } from 'unpdf';
 import { protectPage } from 'puppeteer-afp';
 
 import TurndownService from '@backrunner/turndown';
-import puppeteer, { Browser, Page } from '@cloudflare/puppeteer';
+import puppeteer, { Browser } from '@cloudflare/puppeteer';
 import read from './utils/readability';
 
 import {
   DEFAULT_BROWSER_USER_AGENT,
   DEFAULT_FETCH_CACHE_TTL,
+  DEFAULT_GOOGLE_WEBCACHE_ENDPOINT,
   DEFAULT_SALVAGE_USER_AGENT,
   DEFAULT_TIMEOUT,
   REQUEST_HEADERS,
@@ -80,7 +81,7 @@ export default {
         // use puppeteer to render html
         const sessionId = await this.getRandomSession(env.READER_BROWSER as any);
 
-				// settings getters
+        // settings getters
         const getTimeout = () => env.BROWSER_TIMEOUT || DEFAULT_TIMEOUT;
         const getUserAgent = () => env.BROWSER_USER_AGENT || DEFAULT_BROWSER_USER_AGENT;
         const getSalvageUserAgent = () => env.SALVAGE_USER_AGENT || DEFAULT_SALVAGE_USER_AGENT;
@@ -159,31 +160,6 @@ export default {
           page.setCookie(...pageCookies);
         }
 
-        const salvage = async (targetUrl: string, page: Page) => {
-          const googleArchiveUrl = `https://webcache.googleusercontent.com/search?q=cache:${encodeURIComponent(
-            targetUrl,
-          )}`;
-          const resp = await fetch(googleArchiveUrl, {
-            headers: {
-              'User-Agent': getSalvageUserAgent(),
-            },
-          });
-          resp.body?.cancel().catch(() => void 0);
-          if (!resp.ok) {
-            return null;
-          }
-          try {
-            await page.goto(googleArchiveUrl, {
-              waitUntil: ['load', 'domcontentloaded', 'networkidle0'],
-              timeout: getTimeout(),
-            });
-          } catch (error) {
-            console.error('Error occurs while salvaging:', error);
-            return null;
-          }
-          return true;
-        };
-
         await Promise.all([
           page.setBypassCSP(true),
           page.setCacheEnabled(true),
@@ -255,46 +231,72 @@ export default {
               return reject(new Error('browser timeout'));
             }
 
-            const getSalvaged = async () => {
-              const salvaged = await salvage(targetUrl, page);
-              if (salvaged) {
-                snapshot = (await page.evaluate('giveSnapshot()')) as PageSnapshot;
-              }
-            };
+						const salvage = async () => {
+							const googleArchiveUrl = `${env.GOOGLE_WEB_CACHE_ENDPOINT || DEFAULT_GOOGLE_WEBCACHE_ENDPOINT}?q=cache:${encodeURIComponent(
+								targetUrl,
+							)}`;
+							const resp = await fetch(googleArchiveUrl, {
+								headers: {
+									'User-Agent': getSalvageUserAgent(),
+								},
+							});
+							if (!resp.ok) {
+								return;
+							}
+							const html = await resp.text();
+							if (!checkCfProtection(targetUrl, html)) {
+								return;
+							}
+							try {
+								snapshot = await new Promise((resolve, reject) => {
+									read(html, function (err: any, article: any) {
+										if (err || !article) return reject(err);
+										resolve({
+											title: article.title || '',
+											text: article.text || '',
+											html,
+											href: article.url || '',
+										});
+									});
+								});
+							} catch (error) {
+								console.error(error);
+							}
+						};
 
-            const simulateScraper = async () => {
-              const res = await fetch(targetUrl, {
-                headers: {
-                  'User-Agent': targetUrl.includes('openai.com')
-                    ? 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.0; +https://openai.com/gptbot)'
-                    : 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-                },
-              });
-              if (res.ok && res.headers.get('content-type')?.includes('text/html')) {
-                const html = await res.text();
-                if (!checkCfProtection(targetUrl, html)) {
-                  return;
-                }
-                try {
-                  snapshot = await new Promise((resolve, reject) => {
-                    read(html, function (err: any, article: any) {
-                      if (err || !article) return reject(err);
-                      resolve({
-                        title: article.title || '',
-                        text: article.text || '',
-                        html,
-                        href: article.url || '',
-                      });
-                    });
-                  });
-                } catch (error) {
-                  console.error(error);
-                }
-              }
-            };
+						const simulateScraper = async () => {
+							const res = await fetch(targetUrl, {
+								headers: {
+									'User-Agent': targetUrl.includes('openai.com')
+										? 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.0; +https://openai.com/gptbot)'
+										: 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+								},
+							});
+							if (res.ok && res.headers.get('content-type')?.includes('text/html')) {
+								const html = await res.text();
+								if (!checkCfProtection(targetUrl, html)) {
+									return;
+								}
+								try {
+									snapshot = await new Promise((resolve, reject) => {
+										read(html, function (err: any, article: any) {
+											if (err || !article) return reject(err);
+											resolve({
+												title: article.title || '',
+												text: article.text || '',
+												html,
+												href: article.url || '',
+											});
+										});
+									});
+								} catch (error) {
+									console.error(error);
+								}
+							}
+						};
 
             if (!snapshot.title || !snapshot.parsed?.content || !checkCfProtection(targetUrl, snapshot.html)) {
-              const earlyReturn = await Promise.allSettled([getSalvaged(), simulateScraper(), fallback()]);
+              const earlyReturn = await Promise.allSettled([salvage(), simulateScraper()]);
               const earlyReturnRes = earlyReturn.find((item: any) => item.status === 'fulfilled' && !!item.value);
               if (earlyReturnRes) {
                 resolve(earlyReturnRes);

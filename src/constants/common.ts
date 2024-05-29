@@ -11,4 +11,4 @@ export const DEFAULT_TIMEOUT = 30 * 1000;
 
 export const DEFAULT_FETCH_CACHE_TTL = 5 * 60;
 
-export const SALVAGE_TIMEOUT = 15 * 1000;
+export const DEFAULT_GOOGLE_WEBCACHE_ENDPOINT = 'https://webcache.googleusercontent.com/search';
