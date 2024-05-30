@@ -296,7 +296,7 @@ export default {
 						};
 
             if (!snapshot.title || !snapshot.parsed?.content || !checkCfProtection(targetUrl, snapshot.html)) {
-              const earlyReturn = await Promise.allSettled([salvage(), simulateScraper()]);
+              const earlyReturn = await Promise.allSettled([salvage(), simulateScraper(), fallback()]);
               const earlyReturnRes = earlyReturn.find((item: any) => item.status === 'fulfilled' && !!item.value);
               if (earlyReturnRes) {
                 resolve(earlyReturnRes);

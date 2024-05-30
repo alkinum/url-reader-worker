@@ -99,6 +99,11 @@ module.exports = function(html, options, callback) {
       decodeEntities: false
     });
     if ($('body').length < 1) return callback(new Error("No body tag was found"));
+		// remove google webcache header
+		const firstDiv = $('body > div').first();
+    if (firstDiv.attr('id')?.includes('google-cache-hdr')) {
+      firstDiv.remove();
+    }
     return callback(null, new Article($, options, url), url);
   }
 }
