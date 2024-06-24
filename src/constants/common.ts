@@ -12,3 +12,7 @@ export const DEFAULT_TIMEOUT = 30 * 1000;
 export const DEFAULT_FETCH_CACHE_TTL = 5 * 60;
 
 export const DEFAULT_GOOGLE_WEBCACHE_ENDPOINT = 'https://webcache.googleusercontent.com/search';
+
+export const HOSTNAME_BLACKLIST = ['127.0.0.1', 'localhost'];
+
+export const BROWSER_ERROR_EARLY_FALLBACK_CACHE_TTL = 180;

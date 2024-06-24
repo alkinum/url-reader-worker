@@ -7,6 +7,7 @@ import puppeteer, { Browser } from '@cloudflare/puppeteer';
 import read from './utils/readability';
 
 import {
+  BROWSER_ERROR_EARLY_FALLBACK_CACHE_TTL,
   DEFAULT_BROWSER_USER_AGENT,
   DEFAULT_FETCH_CACHE_TTL,
   DEFAULT_GOOGLE_WEBCACHE_ENDPOINT,
@@ -19,9 +20,10 @@ import { PROTECTION_OPTIONS } from './constants/protection';
 import { EXECUTE_SNAPSHOT, INJECT_FUNCS, READABILITY_JS, TURNSTILE_SOLVER, WORKER_PROTECTION } from './static/scripts';
 import { ImgBrief, PageSnapshot } from './types';
 import { cleanAttribute, checkCfProtection } from './utils/crawler';
-import { tidyMarkdown } from './utils/markdown';
+import { wrapTurndown } from './utils/markdown';
 import { createErrorResponse, createFetchResponse } from './utils/response';
 import { STEALTH } from './static/stealth';
+import { HOSTNAME_BLACKLIST } from './constants/common';
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -34,7 +36,7 @@ export default {
       }
     }
 
-    const targetUrl = decodeURIComponent(parsedIncoming.searchParams.get('target') || '').trim();
+    const targetUrl = decodeURIComponent(parsedIncoming.searchParams.get('target') || '').trimStart();
     const mode = parsedIncoming.searchParams.get('mode');
 
     if (!targetUrl) {
@@ -42,6 +44,16 @@ export default {
     }
 
     if (!/^https?:\/\//.test(targetUrl)) {
+      return createErrorResponse('Invalid target URL', ERROR_CODE.INVALID_TARGET, { status: 400 });
+    }
+
+    try {
+      const parsedURL = new URL(targetUrl);
+      if (HOSTNAME_BLACKLIST.includes(parsedURL.hostname)) {
+        return createErrorResponse('Invalid target URL', ERROR_CODE.INVALID_TARGET, { status: 400 });
+      }
+    } catch (error) {
+      console.error('Failed to parse incoming url:', targetUrl, error);
       return createErrorResponse('Invalid target URL', ERROR_CODE.INVALID_TARGET, { status: 400 });
     }
 
@@ -95,6 +107,8 @@ export default {
             });
             if (res.ok) {
               return await res.text();
+            } else {
+              throw res;
             }
           } catch (error) {
             console.error(error);
@@ -103,22 +117,23 @@ export default {
 
         const earlyFallback = async () => {
           const fallbackRet = await fallback();
-          if (fallbackRet) {
-            const res = createFetchResponse(
-              new Response(fallbackRet as BodyInit, {
-                status: 200,
-                headers: {
-                  'Content-Type': `${mode === 'markdown' ? 'text/markdown' : 'text/html'}; charset=utf-8`,
-                },
-              }),
-              {
-                ...env,
-                CACHE_CONTROL: 'max-age=120' as any,
-              },
-            );
-            ctx.waitUntil(caches.default.put(request, res.clone()));
-            return res;
+          if (!fallbackRet) {
+            throw new Error('Invalid fallback return');
           }
+          const res = createFetchResponse(
+            new Response(fallbackRet as BodyInit, {
+              status: 200,
+              headers: {
+                'Content-Type': `${mode === 'markdown' ? 'text/markdown' : 'text/html'}; charset=utf-8`,
+              },
+            }),
+            {
+              ...env,
+              CACHE_CONTROL: `max-age=${BROWSER_ERROR_EARLY_FALLBACK_CACHE_TTL}` as any,
+            },
+          );
+          ctx.waitUntil(caches.default.put(request, res.clone()));
+          return res;
         };
 
         let browser: Browser | undefined;
@@ -128,8 +143,14 @@ export default {
             browser = await puppeteer.connect(env.READER_BROWSER as any, sessionId);
           } catch (error) {
             console.error(`Failed to connect to ${sessionId}. Error ${error}`);
-            const res = await earlyFallback();
-            if (res) return res;
+            try {
+              const res = await earlyFallback();
+              if (res) {
+                return res;
+              }
+            } catch (error) {
+              console.error('Early fallback about browser launch failed.', error);
+            }
           }
         }
 
@@ -138,8 +159,14 @@ export default {
             browser = await puppeteer.launch(env.READER_BROWSER as any);
           } catch (error) {
             console.error(error);
-            const res = await earlyFallback();
-            if (res) return res;
+            try {
+              const res = await earlyFallback();
+              if (res) {
+                return res;
+              }
+            } catch (error) {
+              console.error('Early fallback about browser launch failed.', error);
+            }
           }
         }
 
@@ -152,38 +179,50 @@ export default {
         // passthrough the cookie in the request
         const cookie = request.headers.get('Cookie');
         if (cookie) {
-          const parsed = parse(cookie);
-          const pageCookies = Object.keys(parsed).map((key) => ({
-            name: key,
-            value: parsed[key],
-          }));
-          page.setCookie(...pageCookies);
+          try {
+            const parsed = parse(cookie);
+            const pageCookies = Object.keys(parsed).map((key) => ({
+              name: key,
+              value: parsed[key],
+            }));
+            page.setCookie(...pageCookies);
+          } catch (error) {
+            console.error('Failed to set cookie to remote req:', error);
+          }
         }
 
-        await Promise.all([
-          page.setBypassCSP(true),
-          page.setCacheEnabled(true),
-          page.setUserAgent(getUserAgent()),
-          page.setDefaultTimeout(getTimeout()),
-          page.evaluateOnNewDocument(STEALTH),
-          page.evaluateOnNewDocument(READABILITY_JS),
-          page.evaluateOnNewDocument(INJECT_FUNCS),
-          page.evaluateOnNewDocument(WORKER_PROTECTION),
-          page.setViewport({
-            width: 1920,
-            height: 1080,
-          }),
-          protectPage(page, PROTECTION_OPTIONS),
-          page.exposeFunction('reportSnapshot', (snapshot: PageSnapshot) => {
-            if (snapshot.href === 'about:blank') {
-              return;
-            }
-            page.emit('snapshot', snapshot);
-          }),
-        ]);
+        try {
+          await Promise.all([
+            page.setBypassCSP(true),
+            page.setCacheEnabled(true),
+            page.setUserAgent(getUserAgent()),
+            page.setDefaultTimeout(getTimeout()),
+            page.evaluateOnNewDocument(STEALTH),
+            page.evaluateOnNewDocument(READABILITY_JS),
+            page.evaluateOnNewDocument(INJECT_FUNCS),
+            page.evaluateOnNewDocument(WORKER_PROTECTION),
+            page.setViewport({
+              width: 1920,
+              height: 1080,
+            }),
+            protectPage(page, PROTECTION_OPTIONS),
+            page.exposeFunction('reportSnapshot', (snapshot: PageSnapshot) => {
+              if (snapshot.href === 'about:blank') {
+                return;
+              }
+              page.emit('snapshot', snapshot);
+            }),
+          ]);
 
-        await page.goto('about:blank', { waitUntil: 'domcontentloaded' });
-        await page.evaluateOnNewDocument(EXECUTE_SNAPSHOT);
+          await page.goto('about:blank', { waitUntil: 'domcontentloaded' });
+          await page.evaluateOnNewDocument(EXECUTE_SNAPSHOT);
+        } catch (error) {
+          console.error('Failed to setup page:', error);
+          return createErrorResponse('Failed to setup page', ERROR_CODE.PAGE_SETUP_FAILED, { status: 500 });
+        } finally {
+          await page.close();
+          browser.disconnect();
+        }
 
         let snapshot: PageSnapshot | undefined;
         let finalResolve: Function | undefined;
@@ -191,13 +230,17 @@ export default {
         let finalWaitTime = 0;
 
         try {
-          const earlyReturn = await new Promise<unknown | undefined>(async (resolve, reject) => {
+          const earlyReturn = await new Promise<unknown | undefined>(async (resolve) => {
+            // wait for the final snapshot event in 5s, it will be emitted multiple times
             (page as any).on('snapshot', (shot: PageSnapshot) => {
               if (shot.html) snapshot = shot;
               if (finalResolve) {
                 if (finalTimeout) clearTimeout(finalTimeout);
                 finalWaitTime += 1000;
-                if (finalWaitTime > 5000) return;
+                if (finalWaitTime > 5000) {
+                  finalResolve?.();
+                  return;
+                }
                 finalTimeout = setTimeout(() => finalResolve?.(), 1000);
               }
             });
@@ -211,101 +254,107 @@ export default {
 
             if (snapshot?.html && !checkCfProtection(targetUrl, snapshot.html)) {
               page.evaluate(TURNSTILE_SOLVER);
+              // wait for the resolver
               await new Promise<void>((resolve) => {
                 setTimeout(() => {
                   resolve();
-                });
+                }, 3000);
               });
+              // refetch a new snapshot
               snapshot = (await page.evaluate('giveSnapshot()')) as PageSnapshot;
             }
 
-            // wait 1 sec for the after load snapshot
+            // wait secs for the snapshot event after page loaded
             await new Promise<void>((resolve) => {
               finalResolve = resolve;
               finalWaitTime += 1000;
-              setTimeout(resolve, 1000);
+              finalTimeout = setTimeout(() => {
+                if (typeof finalResolve === 'function') resolve();
+              }, 1000);
             });
 
-            // make sure the page is available
-            if (!snapshot?.html) {
-              return reject(new Error('browser timeout'));
-            }
+            // === fallback methods ===
+            const salvage = async () => {
+              const googleArchiveUrl = `${
+                env.GOOGLE_WEB_CACHE_ENDPOINT || DEFAULT_GOOGLE_WEBCACHE_ENDPOINT
+              }?q=cache:${encodeURIComponent(targetUrl)}`;
+              const resp = await fetch(googleArchiveUrl, {
+                headers: {
+                  'User-Agent': getSalvageUserAgent(),
+                },
+              });
+              if (!resp.ok) {
+                return;
+              }
+              const html = await resp.text();
+              if (!checkCfProtection(targetUrl, html)) {
+                return;
+              }
+              try {
+                snapshot = await new Promise((resolve, reject) => {
+                  read(html, function (err: any, article: any) {
+                    if (err || !article) return reject(err);
+                    resolve({
+                      title: article.title || '',
+                      text: article.text || '',
+                      html,
+                      href: article.url || '',
+                    });
+                  });
+                });
+              } catch (error) {
+                console.error(error);
+              }
+            };
 
-						const salvage = async () => {
-							const googleArchiveUrl = `${env.GOOGLE_WEB_CACHE_ENDPOINT || DEFAULT_GOOGLE_WEBCACHE_ENDPOINT}?q=cache:${encodeURIComponent(
-								targetUrl,
-							)}`;
-							const resp = await fetch(googleArchiveUrl, {
-								headers: {
-									'User-Agent': getSalvageUserAgent(),
-								},
-							});
-							if (!resp.ok) {
-								return;
-							}
-							const html = await resp.text();
-							if (!checkCfProtection(targetUrl, html)) {
-								return;
-							}
-							try {
-								snapshot = await new Promise((resolve, reject) => {
-									read(html, function (err: any, article: any) {
-										if (err || !article) return reject(err);
-										resolve({
-											title: article.title || '',
-											text: article.text || '',
-											html,
-											href: article.url || '',
-										});
-									});
-								});
-							} catch (error) {
-								console.error(error);
-							}
-						};
+            const simulateScraper = async () => {
+              const res = await fetch(targetUrl, {
+                headers: {
+                  'User-Agent': targetUrl.includes('openai.com')
+                    ? 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.0; +https://openai.com/gptbot)'
+                    : 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+                },
+              });
+              if (res.ok && res.headers.get('content-type')?.includes('text/html')) {
+                const html = await res.text();
+                if (!checkCfProtection(targetUrl, html)) {
+                  return;
+                }
+                try {
+                  snapshot = await new Promise((resolve, reject) => {
+                    read(html, function (err: any, article: any) {
+                      if (err || !article) return reject(err);
+                      resolve({
+                        title: article.title || '',
+                        text: article.text || '',
+                        html,
+                        href: article.url || '',
+                      });
+                    });
+                  });
+                } catch (error) {
+                  console.error(error);
+                }
+              }
+            };
 
-						const simulateScraper = async () => {
-							const res = await fetch(targetUrl, {
-								headers: {
-									'User-Agent': targetUrl.includes('openai.com')
-										? 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.0; +https://openai.com/gptbot)'
-										: 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-								},
-							});
-							if (res.ok && res.headers.get('content-type')?.includes('text/html')) {
-								const html = await res.text();
-								if (!checkCfProtection(targetUrl, html)) {
-									return;
-								}
-								try {
-									snapshot = await new Promise((resolve, reject) => {
-										read(html, function (err: any, article: any) {
-											if (err || !article) return reject(err);
-											resolve({
-												title: article.title || '',
-												text: article.text || '',
-												html,
-												href: article.url || '',
-											});
-										});
-									});
-								} catch (error) {
-									console.error(error);
-								}
-							}
-						};
-
-            if (!snapshot.title || !snapshot.parsed?.content || !checkCfProtection(targetUrl, snapshot.html)) {
+            if (
+              !snapshot.title ||
+              !snapshot?.html ||
+              !snapshot.parsed?.content ||
+              !checkCfProtection(targetUrl, snapshot.html)
+            ) {
               const earlyReturn = await Promise.allSettled([salvage(), simulateScraper(), fallback()]);
               const earlyReturnRes = earlyReturn.find((item: any) => item.status === 'fulfilled' && !!item.value);
               if (earlyReturnRes) {
-                resolve(earlyReturnRes);
+                return resolve(earlyReturnRes);
               }
             }
 
             resolve(undefined);
           });
 
+          // has fallback return
           if (earlyReturn) {
             await page.close();
             browser.disconnect();
@@ -322,20 +371,20 @@ export default {
                 CACHE_CONTROL: 'max-age=120' as any,
               },
             );
-
             ctx.waitUntil(caches.default.put(request, res.clone()));
-
             return res;
           }
-        } catch {
-          return createErrorResponse('Snapshot timeout', ERROR_CODE.SNAPSHOT_TIMEOUT, { status: 500 });
+        } catch (error) {
+          console.error('Failed to generate snapshot:', error);
+          return createErrorResponse('Generate snapshot timeout', ERROR_CODE.SNAPSHOT_TIMEOUT, { status: 500 });
+        } finally {
+          await page.close();
+          browser.disconnect();
         }
 
-        await page.close();
-        browser.disconnect();
-
-        if (!snapshot?.html) {
-          return createErrorResponse('Snapshot timeout', ERROR_CODE.SNAPSHOT_TIMEOUT, { status: 500 });
+        // no fallback return
+        if (!snapshot?.html && !snapshot?.parsed?.content) {
+          return createErrorResponse('Invalid snapshot content', ERROR_CODE.INVALID_SNAPSHOT, { status: 500 });
         }
 
         let returnContent = snapshot.html as string | undefined;
@@ -343,42 +392,12 @@ export default {
         if (mode) {
           if (mode === 'markdown') {
             // init turndown
-            const turndown = new TurndownService();
-            turndown.addRule('remove-irrelevant', {
-              filter: ['meta', 'style', 'script', 'noscript', 'link', 'textarea'],
-              replacement: () => '',
-            });
-            turndown.addRule('title-as-h1', {
-              filter: ['title'],
-              replacement: (innerText) => `${innerText}\n===============\n`,
-            });
-            turndown.addRule('improved-paragraph', {
-              filter: 'p',
-              replacement: (innerText) => {
-                const trimmed = innerText.trim();
-                if (!trimmed) {
-                  return '';
-                }
-
-                return `${trimmed.replace(/\n{3,}/g, '\n\n')}\n\n`;
-              },
-            });
-            turndown.addRule('improved-inline-link', {
-              filter: function (node, options) {
-                return options.linkStyle === 'inlined' && node.nodeName === 'A' && node.getAttribute('href');
-              },
-              replacement: function (content, node) {
-                let href = node.getAttribute('href');
-                if (href) href = href.replace(/([()])/g, '\\$1');
-                let title = cleanAttribute(node.getAttribute('title'));
-                if (title) title = ' "' + title.replace(/"/g, '\\"') + '"';
-
-                const fixedContent = content.replace(/\s+/g, ' ').trim();
-                const fixedHref = href.replace(/\s+/g, '').trim();
-
-                return `[${fixedContent}](${fixedHref}${title || ''})`;
-              },
-            });
+            const turndown = wrapTurndown(
+              new TurndownService({
+                codeBlockStyle: 'fenced',
+                preformattedCode: true,
+              } as any),
+            );
 
             // get alt text
             const urlToAltMap: { [k: string]: string | undefined } = {};
@@ -410,8 +429,14 @@ export default {
               },
             });
 
-            // convert to markdown
-            returnContent = tidyMarkdown(turndown.turndown(snapshot.html).trim());
+            // convert to markdown, ensure the readability worked correctly
+            const originalMarkdown = turndown.turndown(snapshot.html).trim();
+            const parsedContentMarkdown = snapshot.parsed?.content
+              ? turndown.turndown(snapshot.parsed?.content).trim()
+              : '';
+
+            returnContent =
+              parsedContentMarkdown.length > 0.3 * originalMarkdown.length ? parsedContentMarkdown : originalMarkdown;
           } else {
             // just return parsed html content
             returnContent = mode === 'body' ? snapshot.parsed?.content : snapshot.parsed?.textContent;
@@ -419,7 +444,7 @@ export default {
         }
 
         if (!returnContent) {
-          return createErrorResponse('No parsed content', ERROR_CODE.PARSE_FAILED, { status: 500 });
+          return createErrorResponse('No available parsed content', ERROR_CODE.PARSE_FAILED, { status: 500 });
         }
 
         const res = createFetchResponse(

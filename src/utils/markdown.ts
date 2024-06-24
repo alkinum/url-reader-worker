@@ -1,40 +1,75 @@
-export function tidyMarkdown(markdown: string): string {
-  // Step 1: Handle complex broken links with text and optional images spread across multiple lines
-  let normalizedMarkdown = markdown.replace(/\[\s*([^\]\n]+?)\s*\]\s*\(\s*([^)]+)\s*\)/g, (match, text, url) => {
-    // Remove internal new lines and excessive spaces within the text
-    text = text.replace(/\s+/g, ' ').trim();
-    url = url.replace(/\s+/g, '').trim();
-    return `[${text}](${url})`;
-  });
+import TurndownService from '@backrunner/turndown';
+import { cleanAttribute } from './crawler';
 
-  normalizedMarkdown = normalizedMarkdown.replace(
-    /\[\s*([^\]\n!]*?)\s*\n*(?:!\[([^\]]*)\]\((.*?)\))?\s*\n*\]\s*\(\s*([^)]+)\s*\)/g,
-    (match, text, alt, imgUrl, linkUrl) => {
-      // Normalize by removing excessive spaces and new lines
-      text = text.replace(/\s+/g, ' ').trim();
-      alt = alt ? alt.replace(/\s+/g, ' ').trim() : '';
-      imgUrl = imgUrl ? imgUrl.replace(/\s+/g, '').trim() : '';
-      linkUrl = linkUrl.replace(/\s+/g, '').trim();
-      if (imgUrl) {
-        return `[${text} ![${alt}](${imgUrl})](${linkUrl})`;
-      } else {
-        return `[${text}](${linkUrl})`;
+export const wrapTurndown = (turndown: TurndownService) => {
+  turndown.addRule('remove-irrelevant', {
+    filter: ['meta', 'style', 'script', 'noscript', 'link', 'textarea'],
+    replacement: () => '',
+  });
+  turndown.addRule('title-as-h1', {
+    filter: ['title'],
+    replacement: (innerText) => `${innerText}\n===============\n`,
+  });
+  turndown.addRule('improved-paragraph', {
+    filter: 'p',
+    replacement: (innerText) => {
+      const trimmed = innerText.trim();
+      if (!trimmed) {
+        return '';
       }
-    },
-  );
 
-  // Step 2: Normalize regular links that may be broken across lines
-  normalizedMarkdown = normalizedMarkdown.replace(/\[\s*([^\]]+)\]\s*\(\s*([^)]+)\)/g, (match, text, url) => {
-    text = text.replace(/\s+/g, ' ').trim();
-    url = url.replace(/\s+/g, '').trim();
-    return `[${text}](${url})`;
+      return `${trimmed.replace(/\n{3,}/g, '\n\n')}\n\n`;
+    },
+  });
+  turndown.addRule('improved-inline-link', {
+    filter: function (node, options) {
+      return options.linkStyle === 'inlined' && node.nodeName === 'A' && node.getAttribute('href');
+    },
+    replacement: function (content, node) {
+      let href = node.getAttribute('href');
+      if (href) href = href.replace(/([()])/g, '\\$1');
+      let title = cleanAttribute(node.getAttribute('title'));
+      if (title) title = ' "' + title.replace(/"/g, '\\"') + '"';
+
+      const fixedContent = content.replace(/\s+/g, ' ').trim();
+      const fixedHref = href.replace(/\s+/g, '').trim();
+
+      return `[${fixedContent}](${fixedHref}${title || ''})`;
+    },
+  });
+  turndown.addRule('improved-code', {
+    filter: function (node: any) {
+      let hasSiblings = node.previousSibling || node.nextSibling;
+      let isCodeBlock = node.parentNode.nodeName === 'PRE' && !hasSiblings;
+
+      return node.nodeName === 'CODE' && !isCodeBlock;
+    },
+    replacement: function (inputContent: any) {
+      if (!inputContent) return '';
+      let content = inputContent;
+
+      let delimiter = '`';
+      let matches = content.match(/`+/gm) || [];
+      while (matches.indexOf(delimiter) !== -1) delimiter = delimiter + '`';
+      if (content.includes('\n')) {
+        delimiter = '```';
+      }
+
+      let extraSpace = delimiter === '```' ? '\n' : /^`|^ .*?[^ ].* $|`$/.test(content) ? ' ' : '';
+
+      return (
+        delimiter +
+        extraSpace +
+        content +
+        (delimiter === '```' && !content.endsWith(extraSpace) ? extraSpace : '') +
+        delimiter
+      );
+    },
+  });
+  turndown.addRule('truncate-svg', {
+    filter: 'svg' as any,
+    replacement: () => ''
   });
 
-  // Step 3: Replace more than two consecutive empty lines with exactly two empty lines
-  normalizedMarkdown = normalizedMarkdown.replace(/\n{3,}/g, '\n\n');
-
-  // Step 4: Remove leading spaces from each line
-  normalizedMarkdown = normalizedMarkdown.replace(/^[ \t]+/gm, '');
-
-  return normalizedMarkdown.trim();
-}
+  return turndown;
+};
