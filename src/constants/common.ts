@@ -16,3 +16,7 @@ export const DEFAULT_GOOGLE_WEBCACHE_ENDPOINT = 'https://webcache.googleusercont
 export const HOSTNAME_BLACKLIST = ['127.0.0.1', 'localhost'];
 
 export const BROWSER_ERROR_EARLY_FALLBACK_CACHE_TTL = 180;
+
+export const FINAL_SNAPSHOT_WAIT_TIME = 3000;
+
+export const FALLBACK_TIMEOUT = 15 * 1000;

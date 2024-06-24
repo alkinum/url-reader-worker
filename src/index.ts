@@ -13,6 +13,8 @@ import {
   DEFAULT_GOOGLE_WEBCACHE_ENDPOINT,
   DEFAULT_SALVAGE_USER_AGENT,
   DEFAULT_TIMEOUT,
+  FALLBACK_TIMEOUT,
+  FINAL_SNAPSHOT_WAIT_TIME,
   REQUEST_HEADERS,
 } from './constants/common';
 import { ERROR_CODE } from './constants/errors';
@@ -28,6 +30,10 @@ import { HOSTNAME_BLACKLIST } from './constants/common';
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const parsedIncoming = new URL(request.url);
+
+    if (parsedIncoming.pathname !== '/') {
+      return createErrorResponse('Page not found', ERROR_CODE.INVALID_TARGET, { status: 400 });
+    }
 
     // check auth
     if (env.AUTH_KEY) {
@@ -226,22 +232,22 @@ export default {
 
         let snapshot: PageSnapshot | undefined;
         let finalResolve: Function | undefined;
-        let finalTimeout: ReturnType<typeof setTimeout> | undefined;
-        let finalWaitTime = 0;
+        let finalResolveTimeout: ReturnType<typeof setTimeout> | undefined;
+        let finalWaitStart = 0;
+        let finalResolveCalled = false;
 
         try {
           const earlyReturn = await new Promise<unknown | undefined>(async (resolve) => {
             // wait for the final snapshot event in 5s, it will be emitted multiple times
             (page as any).on('snapshot', (shot: PageSnapshot) => {
               if (shot.html) snapshot = shot;
-              if (finalResolve) {
-                if (finalTimeout) clearTimeout(finalTimeout);
-                finalWaitTime += 1000;
-                if (finalWaitTime > 5000) {
+              if (typeof finalResolve === 'function') {
+                if (finalResolveTimeout) clearTimeout(finalResolveTimeout);
+                if (Date.now() - finalWaitStart > FINAL_SNAPSHOT_WAIT_TIME) {
                   finalResolve?.();
                   return;
                 }
-                finalTimeout = setTimeout(() => finalResolve?.(), 1000);
+                finalResolveTimeout = setTimeout(() => finalResolve?.(), 1000);
               }
             });
 
@@ -266,11 +272,19 @@ export default {
 
             // wait secs for the snapshot event after page loaded
             await new Promise<void>((resolve) => {
-              finalResolve = resolve;
-              finalWaitTime += 1000;
-              finalTimeout = setTimeout(() => {
-                if (typeof finalResolve === 'function') resolve();
+              finalResolve = () => {
+                finalResolveCalled = true;
+                resolve();
+              };
+              finalWaitStart = Date.now();
+              finalResolveTimeout = setTimeout(() => {
+                if (typeof finalResolve === 'function') finalResolve();
               }, 1000);
+              setTimeout(() => {
+                if (!finalResolveCalled) {
+                  resolve();
+                }
+              }, FINAL_SNAPSHOT_WAIT_TIME);
             });
 
             // === fallback methods ===
@@ -344,7 +358,7 @@ export default {
               !snapshot.parsed?.content ||
               !checkCfProtection(targetUrl, snapshot.html)
             ) {
-              const earlyReturn = await Promise.allSettled([salvage(), simulateScraper(), fallback()]);
+              const earlyReturn = await Promise.allSettled([salvage(), simulateScraper(), fallback(), new Promise<void>((resolve) => setTimeout(() => resolve(), FALLBACK_TIMEOUT))]);
               const earlyReturnRes = earlyReturn.find((item: any) => item.status === 'fulfilled' && !!item.value);
               if (earlyReturnRes) {
                 return resolve(earlyReturnRes);
