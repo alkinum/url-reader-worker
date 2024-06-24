@@ -370,9 +370,6 @@ export default {
 
           // has fallback return
           if (earlyReturn) {
-            await page.close();
-            browser.disconnect();
-
             const res = createFetchResponse(
               new Response(earlyReturn as BodyInit, {
                 status: 200,
@@ -488,6 +485,9 @@ export default {
             cacheTtl: env.FETCH_CACHE_TTL || DEFAULT_FETCH_CACHE_TTL,
           },
         });
+        if (!fetchRes?.ok) {
+          return createErrorResponse('Invalid fetch remote res.', ERROR_CODE.INVALID_FETCH_RES);
+        }
         const pdf = await fetchRes.arrayBuffer();
         const { text } = await extractText(pdf, { mergePages: true });
         const res = createFetchResponse(
@@ -508,10 +508,11 @@ export default {
             cacheTtl: env.FETCH_CACHE_TTL || DEFAULT_FETCH_CACHE_TTL,
           },
         });
-        const res = createFetchResponse(fetchRes as unknown as Response, env);
-        if (res.status === 200) {
-          ctx.waitUntil(caches.default.put(request, res.clone()));
+        if (!fetchRes?.ok) {
+          return createErrorResponse('Invalid fetch remote res.', ERROR_CODE.INVALID_FETCH_RES);
         }
+        const res = createFetchResponse(fetchRes as unknown as Response, env);
+        ctx.waitUntil(caches.default.put(request, res.clone()));
         return res;
       }
     }
