@@ -12,15 +12,17 @@ export const createErrorResponse = (message: string, code?: number, init?: Respo
 };
 
 export const createFetchResponse = (res: Response, env?: Env) => {
-  // overwrite cache control
   const cloned = res.clone();
+  
+  const newHeaders = new Headers(cloned.headers);
+  
+  newHeaders.set('Cache-Control', env?.CACHE_CONTROL || 'max-age=600');
+  newHeaders.delete('Expires');
+  newHeaders.delete('Last-Modified');
+
   return new Response(cloned.body, {
-    ...cloned,
-    headers: {
-      ...Object.fromEntries(cloned.headers.entries()),
-      'Cache-Control': env?.CACHE_CONTROL || 'max-age=600',
-      Expires: '',
-      'Last-Modified': '',
-    },
+    status: cloned.status,
+    statusText: cloned.statusText,
+    headers: newHeaders,
   });
 };

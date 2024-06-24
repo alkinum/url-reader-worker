@@ -21,7 +21,7 @@ import { ERROR_CODE } from './constants/errors';
 import { PROTECTION_OPTIONS } from './constants/protection';
 import { EXECUTE_SNAPSHOT, INJECT_FUNCS, READABILITY_JS, TURNSTILE_SOLVER, WORKER_PROTECTION } from './static/scripts';
 import { ImgBrief, PageSnapshot } from './types';
-import { cleanAttribute, checkCfProtection } from './utils/crawler';
+import { cleanAttribute, checkSiteSafetyProtection } from './utils/crawler';
 import { wrapTurndown } from './utils/markdown';
 import { createErrorResponse, createFetchResponse } from './utils/response';
 import { STEALTH } from './static/stealth';
@@ -64,7 +64,9 @@ export default {
     }
 
     const cached = await caches.default.match(request);
-    if (cached) {
+    if (cached && cached instanceof Response) {
+      console.info('Return from cache:', targetUrl);
+      console.info('Cache content:', JSON.stringify(cached));
       return cached;
     }
 
@@ -73,16 +75,22 @@ export default {
       ...REQUEST_HEADERS,
     };
 
-    const headRes = await fetch(targetUrl, {
-      method: 'HEAD',
-      headers: {
-        ...requestHeaders,
-      },
-      cf: {
-        cacheKey: `HEAD_${targetUrl}`,
-        cacheTtl: env.FETCH_CACHE_TTL || DEFAULT_FETCH_CACHE_TTL,
-      },
-    });
+    let headRes;
+    try {
+      headRes = await fetch(targetUrl, {
+        method: 'HEAD',
+        headers: {
+          ...requestHeaders,
+        },
+        cf: {
+          cacheKey: `HEAD_${targetUrl}`,
+          cacheTtl: env.FETCH_CACHE_TTL || DEFAULT_FETCH_CACHE_TTL,
+        },
+      });
+    } catch (error) {
+      console.error('Failed to check content type:', error);
+      return createErrorResponse('Failed to check content type', ERROR_CODE.UNSUPPORTED_CONTENT, { status: 400 });
+    }
 
     let contentType = headRes.headers.get('Content-Type') || '';
     if (/^(video|audio|(application\/octet-stream))/.test(contentType)) {
@@ -112,6 +120,8 @@ export default {
               },
             });
             if (res.ok) {
+              console.info('Return from early fallback before browser inited:', targetUrl);
+              console.info('early return res', await res.text());
               return await res.text();
             } else {
               throw res;
@@ -124,6 +134,7 @@ export default {
         const earlyFallback = async () => {
           const fallbackRet = await fallback();
           if (!fallbackRet) {
+            console.error('Invalid early fallback return before browser inited:', fallbackRet);
             throw new Error('Invalid fallback return');
           }
           const res = createFetchResponse(
@@ -180,6 +191,8 @@ export default {
           return createErrorResponse('Failed to launch browser', ERROR_CODE.BROWSER_FAILED, { status: 500 });
         }
 
+        console.info('Browser inited.');
+
         const page = await browser.newPage();
 
         // passthrough the cookie in the request
@@ -196,6 +209,8 @@ export default {
             console.error('Failed to set cookie to remote req:', error);
           }
         }
+
+        console.info('Page created.');
 
         try {
           await Promise.all([
@@ -224,11 +239,20 @@ export default {
           await page.evaluateOnNewDocument(EXECUTE_SNAPSHOT);
         } catch (error) {
           console.error('Failed to setup page:', error);
-          return createErrorResponse('Failed to setup page', ERROR_CODE.PAGE_SETUP_FAILED, { status: 500 });
-        } finally {
           await page.close();
           browser.disconnect();
+          try {
+            const res = await earlyFallback();
+            if (res) {
+              return res;
+            }
+          } catch (error) {
+            console.error('Failed to get fallback res after setup page failed:', error);
+            return createErrorResponse('Failed to setup page', ERROR_CODE.PAGE_SETUP_FAILED, { status: 500 });
+          }
         }
+
+        console.info('Page setup finished, starting to wait snapshot.');
 
         let snapshot: PageSnapshot | undefined;
         let finalResolve: Function | undefined;
@@ -251,41 +275,49 @@ export default {
               }
             });
 
-            await page.goto(targetUrl, {
-              waitUntil: ['load', 'domcontentloaded', 'networkidle0'],
-              timeout: getTimeout(),
-            });
-
-            snapshot = (await page.evaluate('giveSnapshot()')) as PageSnapshot;
-
-            if (snapshot?.html && !checkCfProtection(targetUrl, snapshot.html)) {
-              page.evaluate(TURNSTILE_SOLVER);
-              // wait for the resolver
-              await new Promise<void>((resolve) => {
-                setTimeout(() => {
-                  resolve();
-                }, 3000);
+            try {
+              await page.goto(targetUrl, {
+                waitUntil: ['load', 'domcontentloaded', 'networkidle0'],
+                timeout: getTimeout(),
               });
-              // refetch a new snapshot
               snapshot = (await page.evaluate('giveSnapshot()')) as PageSnapshot;
-            }
+              console.info('After page loaded snapshot fetched.');
 
-            // wait secs for the snapshot event after page loaded
-            await new Promise<void>((resolve) => {
-              finalResolve = () => {
-                finalResolveCalled = true;
-                resolve();
-              };
-              finalWaitStart = Date.now();
-              finalResolveTimeout = setTimeout(() => {
-                if (typeof finalResolve === 'function') finalResolve();
-              }, 1000);
-              setTimeout(() => {
-                if (!finalResolveCalled) {
+              if (snapshot?.html && !checkSiteSafetyProtection(targetUrl, snapshot.html)) {
+                page.evaluate(TURNSTILE_SOLVER);
+                console.info('Turnstile detected, solver evaluated.');
+                // wait for the resolver
+                await new Promise<void>((resolve) => {
+                  setTimeout(() => {
+                    resolve();
+                  }, 3000);
+                });
+                // refetch a new snapshot
+                snapshot = (await page.evaluate('giveSnapshot()')) as PageSnapshot;
+                console.info('New snapshot after turnstile resolver applied fetched.');
+              }
+
+              // wait secs for the snapshot event after page loaded
+              await new Promise<void>((resolve) => {
+                finalResolve = () => {
+                  finalResolveCalled = true;
+                  console.info('Final wait resolved.');
                   resolve();
-                }
-              }, FINAL_SNAPSHOT_WAIT_TIME);
-            });
+                };
+                finalWaitStart = Date.now();
+                finalResolveTimeout = setTimeout(() => {
+                  if (typeof finalResolve === 'function') finalResolve();
+                }, 1000);
+                setTimeout(() => {
+                  if (!finalResolveCalled) {
+                    console.warn('Final wait timeout, no more snapshot event.');
+                    resolve();
+                  }
+                }, FINAL_SNAPSHOT_WAIT_TIME);
+              });
+            } catch (error) {
+              console.error('Failed to browse the page:', error);
+            }
 
             // === fallback methods ===
             const salvage = async () => {
@@ -301,7 +333,7 @@ export default {
                 return;
               }
               const html = await resp.text();
-              if (!checkCfProtection(targetUrl, html)) {
+              if (!checkSiteSafetyProtection(targetUrl, html)) {
                 return;
               }
               try {
@@ -331,7 +363,7 @@ export default {
               });
               if (res.ok && res.headers.get('content-type')?.includes('text/html')) {
                 const html = await res.text();
-                if (!checkCfProtection(targetUrl, html)) {
+                if (!checkSiteSafetyProtection(targetUrl, html)) {
                   return;
                 }
                 try {
@@ -353,18 +385,27 @@ export default {
             };
 
             if (
-              !snapshot.title ||
+              !snapshot?.title ||
               !snapshot?.html ||
-              !snapshot.parsed?.content ||
-              !checkCfProtection(targetUrl, snapshot.html)
+              !snapshot?.parsed?.content ||
+              !checkSiteSafetyProtection(targetUrl, snapshot?.html || '')
             ) {
-              const earlyReturn = await Promise.allSettled([salvage(), simulateScraper(), fallback(), new Promise<void>((resolve) => setTimeout(() => resolve(), FALLBACK_TIMEOUT))]);
-              const earlyReturnRes = earlyReturn.find((item: any) => item.status === 'fulfilled' && !!item.value);
+              console.info('Need to return content earlier because of invalid snapshot.');
+              const fallbackResList = await Promise.allSettled([
+                salvage(),
+                simulateScraper(),
+                fallback(),
+                new Promise<void>((resolve) => setTimeout(() => resolve(), FALLBACK_TIMEOUT)),
+              ]);
+              const earlyReturnRes = fallbackResList.find((item: any) => item.status === 'fulfilled' && !!item.value);
               if (earlyReturnRes) {
-                return resolve(earlyReturnRes);
+                console.info('Early return resolved.');
+                resolve(earlyReturnRes);
+                return;
               }
             }
 
+            console.info('No need to early return, now processing content.');
             resolve(undefined);
           });
 
@@ -392,6 +433,8 @@ export default {
           await page.close();
           browser.disconnect();
         }
+
+        console.info('Starting to process snapshot content.');
 
         // no fallback return
         if (!snapshot?.html && !snapshot?.parsed?.content) {
@@ -446,6 +489,8 @@ export default {
               ? turndown.turndown(snapshot.parsed?.content).trim()
               : '';
 
+            console.info('Turndown converted.');
+
             returnContent =
               parsedContentMarkdown.length > 0.3 * originalMarkdown.length ? parsedContentMarkdown : originalMarkdown;
           } else {
@@ -468,7 +513,7 @@ export default {
           env,
         );
 
-        if (checkCfProtection(targetUrl, returnContent)) {
+        if (returnContent && checkSiteSafetyProtection(targetUrl, returnContent)) {
           ctx.waitUntil(caches.default.put(request, res.clone()));
         }
 
