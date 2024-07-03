@@ -35,6 +35,15 @@ export default {
       return createErrorResponse('Page not found', ERROR_CODE.INVALID_TARGET, { status: 400 });
     }
 
+		const userAgent = request.headers.get('UserAgent');
+		if (!userAgent) {
+			return createErrorResponse('Invalid request headers', ERROR_CODE.INVALID_HEADERS, { status: 400 });
+		}
+
+		if (/(netcraft\.com)|NetcraftSurveyAgent/.test(userAgent)) {
+			return createErrorResponse('Abuse detected', ERROR_CODE.ABUSE, { status: 403 });
+		}
+
     // check auth
     if (env.AUTH_KEY) {
       if (parsedIncoming.searchParams.get('auth_key') !== env.AUTH_KEY) {
