@@ -35,7 +35,7 @@ export default {
       return createErrorResponse('Page not found', ERROR_CODE.INVALID_TARGET, { status: 400 });
     }
 
-		const userAgent = request.headers.get('UserAgent');
+		const userAgent = request.headers.get('user-agent');
 		if (!userAgent) {
 			return createErrorResponse('Invalid request headers', ERROR_CODE.INVALID_HEADERS, { status: 400 });
 		}
