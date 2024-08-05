@@ -29,4 +29,5 @@ export interface PageSnapshot {
   parsed?: Partial<ReadabilityParsed> | null;
   screenshot?: Buffer;
   imgs?: ImgBrief[];
+  contentType?: string;
 }

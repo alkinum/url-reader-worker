@@ -15,6 +15,7 @@ import {
   DEFAULT_TIMEOUT,
   FALLBACK_TIMEOUT,
   FINAL_SNAPSHOT_WAIT_TIME,
+  GENERAL_FALLBACK_CACHE_TTL,
   REQUEST_HEADERS,
 } from './constants/common';
 import { ERROR_CODE } from './constants/errors';
@@ -113,6 +114,40 @@ export default {
 
     switch (contentType.toLowerCase().trim()) {
       case 'text/html': {
+        if (mode === 'get_response') {
+          const directGetResponse = async () => {
+            const res = await fetch(targetUrl, {
+              headers: {
+                'User-Agent': DEFAULT_BROWSER_USER_AGENT,
+              },
+              cf: {
+                cacheKey: `HEAD_${targetUrl}`,
+                cacheTtl: env.FETCH_CACHE_TTL || DEFAULT_FETCH_CACHE_TTL,
+              },
+            });
+            const contentType = res.headers.get('content-type');
+            const html = await res.text();
+            return {
+              html,
+              contentType: contentType || '',
+            };
+          }
+          const getRes = await directGetResponse();
+          const res = createFetchResponse(
+            new Response(getRes.html, {
+              status: 200,
+              headers: {
+                'Content-Type': getRes.contentType,
+              },
+            }),
+            {
+              ...env,
+            },
+          );
+          ctx.waitUntil(caches.default.put(request, res.clone()));
+          return res;
+        }
+
         // use puppeteer to render html
         const sessionId = await this.getRandomSession(env.READER_BROWSER as any);
 
@@ -122,10 +157,22 @@ export default {
         const getSalvageUserAgent = () => env.SALVAGE_USER_AGENT || DEFAULT_SALVAGE_USER_AGENT;
 
         const fallback = async () => {
+          let fallbackMode = 'markdown';
+          switch (mode) {
+            case 'markdown':
+              break;
+            case 'text':
+              fallbackMode = 'text';
+              break;
+            default:
+              fallbackMode = 'html';
+              break;
+          }
           try {
             const res = await fetch(`https://r.jina.ai/${targetUrl}`, {
               headers: {
                 'User-Agent': getUserAgent(),
+                'x-response-with': fallbackMode,
               },
             });
             if (res.ok) {
@@ -228,8 +275,9 @@ export default {
             page.setUserAgent(getUserAgent()),
             page.setDefaultTimeout(getTimeout()),
             page.evaluateOnNewDocument(STEALTH),
-            page.evaluateOnNewDocument(READABILITY_JS),
-            page.evaluateOnNewDocument(INJECT_FUNCS),
+            ...(mode === 'html' ? [] : [
+              page.evaluateOnNewDocument(READABILITY_JS),
+            ]),
             page.evaluateOnNewDocument(WORKER_PROTECTION),
             page.setViewport({
               width: 1920,
@@ -347,6 +395,7 @@ export default {
               }
               try {
                 snapshot = await new Promise((resolve, reject) => {
+                  if (mode === 'html') {
                   read(html, function (err: any, article: any) {
                     if (err || !article) return reject(err);
                     resolve({
@@ -356,6 +405,7 @@ export default {
                       href: article.url || '',
                     });
                   });
+                }
                 });
               } catch (error) {
                 console.error(error);
@@ -429,7 +479,7 @@ export default {
               }),
               {
                 ...env,
-                CACHE_CONTROL: 'max-age=120' as any,
+                CACHE_CONTROL: `max-age=${GENERAL_FALLBACK_CACHE_TTL}` as any,
               },
             );
             ctx.waitUntil(caches.default.put(request, res.clone()));
@@ -504,7 +554,7 @@ export default {
               parsedContentMarkdown.length > 0.3 * originalMarkdown.length ? parsedContentMarkdown : originalMarkdown;
           } else {
             // just return parsed html content
-            returnContent = mode === 'body' ? snapshot.parsed?.content : snapshot.parsed?.textContent;
+            returnContent = mode === 'text' ? snapshot.parsed?.content : snapshot.html;
           }
         }
 

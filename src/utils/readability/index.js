@@ -81,7 +81,7 @@ Article.prototype.getHTML = function() {
   return this.$.html();
 }
 
-module.exports = function(html, options, callback) {
+module.exports = function (html, options, callback) {
   if (typeof options === 'function') {
     callback = options;
     options = {
