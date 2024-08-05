@@ -27,6 +27,7 @@ import { wrapTurndown } from './utils/markdown';
 import { createErrorResponse, createFetchResponse } from './utils/response';
 import { STEALTH } from './static/stealth';
 import { HOSTNAME_BLACKLIST } from './constants/common';
+import { cleanHtml } from './utils/html';
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -54,6 +55,7 @@ export default {
 
     const targetUrl = decodeURIComponent(parsedIncoming.searchParams.get('target') || '').trimStart();
     const mode = parsedIncoming.searchParams.get('mode');
+    const targetSelector = decodeURIComponent(parsedIncoming.searchParams.get('selector') || '');
 
     if (!targetUrl) {
       return createErrorResponse('Target URL is required', ERROR_CODE.INVALID_TARGET, { status: 400 });
@@ -554,7 +556,14 @@ export default {
         } else {
           // not markdown mode
           // just return parsed html content
-          returnContent = mode === 'text' ? snapshot.parsed?.content : snapshot.html;
+          switch (mode) {
+            case 'text':
+              returnContent = snapshot.parsed?.content;
+              break;
+            default:
+              returnContent = cleanHtml(snapshot.html, targetSelector);
+              break;
+          }
         }
 
         if (!returnContent) {
@@ -565,7 +574,7 @@ export default {
           new Response(returnContent, {
             status: 200,
             headers: {
-              'Content-Type': `${mode === 'markdown' ? 'text/markdown' : 'text/html'}; charset=utf-8`,
+              'Content-Type': `${['markdown', 'text'].includes(`${mode}`) ? 'text/markdown' : 'text/html'}; charset=utf-8`,
             },
           }),
           env,

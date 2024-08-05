@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## v0.3.1
+
+- breaking: now the `html` mode will return a HTML which stripped `<svg>`, `<script>`, `<img>`, `<link>`, `<style>`, `<meta>`, and only extract the body part. If you want a raw html, please pass `raw_html` to `mode`.
+
 ## v0.3.0
 
 - breaking: mode `body` now changed to `text`, the behavior is the same as before, we only changed the param name in the request this version.
