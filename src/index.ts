@@ -36,14 +36,14 @@ export default {
       return createErrorResponse('Page not found', ERROR_CODE.INVALID_TARGET, { status: 400 });
     }
 
-		const userAgent = request.headers.get('user-agent');
-		if (!userAgent) {
-			return createErrorResponse('Invalid request headers', ERROR_CODE.INVALID_HEADERS, { status: 400 });
-		}
+    const userAgent = request.headers.get('user-agent');
+    if (!userAgent) {
+      return createErrorResponse('Invalid request headers', ERROR_CODE.INVALID_HEADERS, { status: 400 });
+    }
 
-		if (/(netcraft\.com)|NetcraftSurveyAgent/.test(userAgent)) {
-			return createErrorResponse('Abuse detected', ERROR_CODE.ABUSE, { status: 403 });
-		}
+    if (/(netcraft\.com)|NetcraftSurveyAgent/.test(userAgent)) {
+      return createErrorResponse('Abuse detected', ERROR_CODE.ABUSE, { status: 403 });
+    }
 
     // check auth
     if (env.AUTH_KEY) {
@@ -131,7 +131,7 @@ export default {
               html,
               contentType: contentType || '',
             };
-          }
+          };
           const getRes = await directGetResponse();
           const res = createFetchResponse(
             new Response(getRes.html, {
@@ -275,9 +275,7 @@ export default {
             page.setUserAgent(getUserAgent()),
             page.setDefaultTimeout(getTimeout()),
             page.evaluateOnNewDocument(STEALTH),
-            ...(mode === 'html' ? [] : [
-              page.evaluateOnNewDocument(READABILITY_JS),
-            ]),
+            ...(mode === 'html' ? [] : [page.evaluateOnNewDocument(READABILITY_JS)]),
             page.evaluateOnNewDocument(WORKER_PROTECTION),
             page.setViewport({
               width: 1920,
@@ -396,16 +394,16 @@ export default {
               try {
                 snapshot = await new Promise((resolve, reject) => {
                   if (mode === 'html') {
-                  read(html, function (err: any, article: any) {
-                    if (err || !article) return reject(err);
-                    resolve({
-                      title: article.title || '',
-                      text: article.text || '',
-                      html,
-                      href: article.url || '',
+                    read(html, function (err: any, article: any) {
+                      if (err || !article) return reject(err);
+                      resolve({
+                        title: article.title || '',
+                        text: article.text || '',
+                        html,
+                        href: article.url || '',
+                      });
                     });
-                  });
-                }
+                  }
                 });
               } catch (error) {
                 console.error(error);
@@ -502,60 +500,61 @@ export default {
 
         let returnContent = snapshot.html as string | undefined;
 
-        if (mode) {
-          if (mode === 'markdown') {
-            // init turndown
-            const turndown = wrapTurndown(
-              new TurndownService({
-                codeBlockStyle: 'fenced',
-                preformattedCode: true,
-              } as any),
-            );
+        // postprocess of the snapshot determine by the mode
+        if (mode === 'markdown') {
+          // markdown mode
+          // init turndown
+          const turndown = wrapTurndown(
+            new TurndownService({
+              codeBlockStyle: 'fenced',
+              preformattedCode: true,
+            } as any),
+          );
 
-            // get alt text
-            const urlToAltMap: { [k: string]: string | undefined } = {};
-            if (snapshot.imgs?.length) {
-              (snapshot.imgs || []).forEach((x) => {
-                const r = this.getAltText(x);
-                if (r && x.src) {
-                  urlToAltMap[x.src.trim()] = r;
-                }
-              });
-            }
-
-            let imgIdx = 0;
-
-            turndown.addRule('img-generated-alt', {
-              filter: 'img',
-              replacement: (_content, node) => {
-                const src = (node.getAttribute('src') || '').trim();
-                const alt = cleanAttribute(node.getAttribute('alt'));
-                if (!src) {
-                  return '';
-                }
-                const mapped = urlToAltMap[src];
-                imgIdx++;
-                if (mapped) {
-                  return `![Image ${imgIdx}: ${mapped || alt}](${src})`;
-                }
-                return alt ? `![Image ${imgIdx}: ${alt}](${src})` : `![Image ${imgIdx}](${src})`;
-              },
+          // get alt text
+          const urlToAltMap: { [k: string]: string | undefined } = {};
+          if (snapshot.imgs?.length) {
+            (snapshot.imgs || []).forEach((x) => {
+              const r = this.getAltText(x);
+              if (r && x.src) {
+                urlToAltMap[x.src.trim()] = r;
+              }
             });
-
-            // convert to markdown, ensure the readability worked correctly
-            const originalMarkdown = turndown.turndown(snapshot.html).trim();
-            const parsedContentMarkdown = snapshot.parsed?.content
-              ? turndown.turndown(snapshot.parsed?.content).trim()
-              : '';
-
-            console.info('Turndown converted.');
-
-            returnContent =
-              parsedContentMarkdown.length > 0.3 * originalMarkdown.length ? parsedContentMarkdown : originalMarkdown;
-          } else {
-            // just return parsed html content
-            returnContent = mode === 'text' ? snapshot.parsed?.content : snapshot.html;
           }
+
+          let imgIdx = 0;
+
+          turndown.addRule('img-generated-alt', {
+            filter: 'img',
+            replacement: (_content, node) => {
+              const src = (node.getAttribute('src') || '').trim();
+              const alt = cleanAttribute(node.getAttribute('alt'));
+              if (!src) {
+                return '';
+              }
+              const mapped = urlToAltMap[src];
+              imgIdx++;
+              if (mapped) {
+                return `![Image ${imgIdx}: ${mapped || alt}](${src})`;
+              }
+              return alt ? `![Image ${imgIdx}: ${alt}](${src})` : `![Image ${imgIdx}](${src})`;
+            },
+          });
+
+          // convert to markdown, ensure the readability worked correctly
+          const originalMarkdown = turndown.turndown(snapshot.html).trim();
+          const parsedContentMarkdown = snapshot.parsed?.content
+            ? turndown.turndown(snapshot.parsed?.content).trim()
+            : '';
+
+          console.info('Turndown converted.');
+
+          returnContent =
+            parsedContentMarkdown.length > 0.3 * originalMarkdown.length ? parsedContentMarkdown : originalMarkdown;
+        } else {
+          // not markdown mode
+          // just return parsed html content
+          returnContent = mode === 'text' ? snapshot.parsed?.content : snapshot.html;
         }
 
         if (!returnContent) {
