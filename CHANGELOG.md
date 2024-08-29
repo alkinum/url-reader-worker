@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## v0.3.2
+
+- fix: cannot get snapshot from browser will intent to a never resolved promise.
+
+- fix: body will be used twice because log output.
+
 ## v0.3.1
 
 - breaking: now the `html` mode will return a HTML which stripped `<svg>`, `<script>`, `<img>`, `<link>`, `<style>`, `<meta>`, and only extract the body part. If you want a raw html, please pass `raw_html` to `mode`.

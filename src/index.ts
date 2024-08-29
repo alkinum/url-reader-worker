@@ -178,9 +178,10 @@ export default {
               },
             });
             if (res.ok) {
-              console.info('Return from early fallback before browser inited:', targetUrl);
-              console.info('early return res', await res.text());
-              return await res.text();
+              const returnText = await res.text();
+              console.info('Return from fallback:', targetUrl);
+              console.info('Early return res:', returnText);
+              return returnText;
             } else {
               throw res;
             }
@@ -279,6 +280,7 @@ export default {
             page.evaluateOnNewDocument(STEALTH),
             ...(mode === 'html' ? [] : [page.evaluateOnNewDocument(READABILITY_JS)]),
             page.evaluateOnNewDocument(WORKER_PROTECTION),
+            page.evaluateOnNewDocument(INJECT_FUNCS),
             page.setViewport({
               width: 1920,
               height: 1080,
@@ -333,10 +335,14 @@ export default {
             });
 
             try {
-              await page.goto(targetUrl, {
-                waitUntil: ['load', 'domcontentloaded', 'networkidle0'],
-                timeout: getTimeout(),
-              });
+              await Promise.race([
+                page.goto(targetUrl, {
+                  waitUntil: ['load', 'domcontentloaded', 'networkidle0'],
+                  timeout: getTimeout(),
+                }),
+                new Promise((resolve, reject) => setTimeout(() => reject, getTimeout())),
+              ]);
+
               snapshot = (await page.evaluate('giveSnapshot()')) as PageSnapshot;
               console.info('After page loaded snapshot fetched.');
 
@@ -574,7 +580,9 @@ export default {
           new Response(returnContent, {
             status: 200,
             headers: {
-              'Content-Type': `${['markdown', 'text'].includes(`${mode}`) ? 'text/markdown' : 'text/html'}; charset=utf-8`,
+              'Content-Type': `${
+                ['markdown', 'text'].includes(`${mode}`) ? 'text/markdown' : 'text/html'
+              }; charset=utf-8`,
             },
           }),
           env,
