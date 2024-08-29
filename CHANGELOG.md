@@ -6,6 +6,8 @@
 
 - fix: body will be used twice because log output.
 
+- chore: upgrade deps.
+
 ## v0.3.1
 
 - breaking: now the `html` mode will return a HTML which stripped `<svg>`, `<script>`, `<img>`, `<link>`, `<style>`, `<meta>`, and only extract the body part. If you want a raw html, please pass `raw_html` to `mode`.
