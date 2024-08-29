@@ -1,5 +1,6 @@
 import * as cheerio from 'cheerio';
-import { AnyNode, Cheerio } from 'cheerio';
+import { Cheerio } from 'cheerio';
+import { AnyNode, Element } from 'domhandler';
 
 export function cleanHtml(html: string, targetSelector?: string): string {
   // 加载HTML
@@ -21,7 +22,7 @@ export function cleanHtml(html: string, targetSelector?: string): string {
 
   // 遍历根元素内的所有元素
   $root.find('*').addBack().each((_, elem) => {
-    const attributes = (elem as cheerio.Element).attribs;
+    const attributes = (elem as Element).attribs;
     // 只保留class和id属性
     for (const attr in attributes) {
       if (attr !== 'class' && attr !== 'id') {
