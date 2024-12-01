@@ -144,6 +144,31 @@ window.giveSnapshot = giveSnapshot;
 window.briefImgs = briefImgs;
 `.trim();
 
+export const MUTATION_IDLE_WATH = `
+(function () {
+  let timeout;
+  const sendMsg = ()=> {
+    document.dispatchEvent(new CustomEvent('mutationIdle'));
+  };
+
+  const cb = () => {
+    if (timeout) {
+      clearTimeout(timeout);
+      timeout = setTimeout(sendMsg, 200);
+    }
+  };
+  const mutationObserver = new MutationObserver(cb);
+
+  document.addEventListener('DOMContentLoaded', () => {
+    mutationObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+    timeout = setTimeout(sendMsg, 200);
+  }, { once: true })
+})();
+`.trim();
+
 export const EXECUTE_SNAPSHOT = `
 let aftershot = undefined;
 
@@ -168,6 +193,7 @@ const handlePageLoad = () => {
 
 document.addEventListener('readystatechange', handlePageLoad);
 document.addEventListener('load', handlePageLoad);
+document.addEventListener('mutationIdle', handlePageLoad);
 `.trim();
 
 export const WORKER_PROTECTION = `
