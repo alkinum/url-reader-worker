@@ -3,7 +3,24 @@ import { Cheerio } from 'cheerio';
 import { AnyNode, Element } from 'domhandler';
 
 export function cleanHtml(html: string, targetSelector?: string): string {
-  const $ = cheerio.load(html);
+  const hasHtmlTag = /<html[\s>]/i.test(html);
+  const hasBodyTag = /<body[\s>]/i.test(html);
+
+  let processedHtml = html;
+  if (!hasHtmlTag) {
+    processedHtml = `<html>${processedHtml}</html>`;
+  }
+  if (!hasBodyTag) {
+    processedHtml = processedHtml.replace(
+      /<html([^>]*)>/i,
+      `<html$1><body>`
+    ).replace(
+      /<\/html>/i,
+      `</body></html>`
+    );
+  }
+
+  const $ = cheerio.load(processedHtml);
 
   let $root: Cheerio<AnyNode> = $('body').length ? $('body') : $.root();
 
