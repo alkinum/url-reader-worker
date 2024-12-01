@@ -6,16 +6,27 @@ export const INJECT_FUNCS = `
 function briefImgs(elem) {
 	const imageTags = Array.from((elem || document).querySelectorAll('img[src]'));
 
-	return imageTags.map((x)=> ({
-		src: x.src,
-		loaded: x.complete,
-		width: x.width,
-		height: x.height,
-		naturalWidth: x.naturalWidth,
-		naturalHeight: x.naturalHeight,
-		alt: x.alt || x.title,
-	}));
+	return imageTags.map((x)=> {
+		// do not include images without title or alt
+		if (!x.title || !x.alt) {
+			return;
+		}
+		const src = x.src?.toLowerCase();
+    if (!src) {
+			return;
+		}
+		const imageItem = {
+			src,
+			loaded: x.complete,
+			width: x.width,
+			height: x.height,
+			naturalWidth: x.naturalWidth,
+			naturalHeight: x.naturalHeight,
+			alt: x.alt || x.title,
+		};
+	}).filter(Boolean);
 }
+
 function giveSnapshot() {
 	let parsed;
 
@@ -156,3 +167,9 @@ export const TURNSTILE_SOLVER = `
 
 	clickTurnstile();
 })();`.trim();
+
+export const STEALTH_PROTECTION = `
+delete Function.prototype.toString;
+delete Function.prototype.bind.apply;
+delete Function.prototype.bind.call;
+`.trim();
