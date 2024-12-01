@@ -19,7 +19,7 @@ import {
 } from './constants/common';
 import { ERROR_CODE } from './constants/errors';
 import { PROTECTION_OPTIONS } from './constants/protection';
-import { EXECUTE_SNAPSHOT, INJECT_FUNCS, READABILITY_JS, TURNSTILE_SOLVER, WORKER_PROTECTION } from './static/scripts';
+import { EXECUTE_SNAPSHOT, INJECT_FUNCS, READABILITY_JS, STEALTH_PROTECTION, TURNSTILE_SOLVER, WORKER_PROTECTION } from './static/scripts';
 import { ImgBrief, PageSnapshot } from './types';
 import { cleanAttribute, checkSiteSafetyProtection } from './utils/crawler';
 import { wrapTurndown } from './utils/markdown';
@@ -277,6 +277,7 @@ export default {
             page.setUserAgent(getUserAgent()),
             page.setDefaultTimeout(getTimeout()),
             page.evaluateOnNewDocument(STEALTH),
+						page.evaluateOnNewDocument(STEALTH_PROTECTION),
             ...(mode === 'html' ? [] : [page.evaluateOnNewDocument(READABILITY_JS)]),
             page.evaluateOnNewDocument(WORKER_PROTECTION),
             page.evaluateOnNewDocument(INJECT_FUNCS),
