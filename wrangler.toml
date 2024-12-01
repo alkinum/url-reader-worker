@@ -22,7 +22,6 @@ BROWSER_TIMEOUT = 30000
 FETCH_CACHE_TTL = 300
 BROWSER_USER_AGENT = ""
 SALVAGE_USER_AGENT = ""
-GOOGLE_WEB_CACHE_ENDPOINT = ""
 AUTH_KEY = ""
 
 # Bind the Workers AI model catalog. Run machine learning models, powered by serverless GPUs, on Cloudflare’s global network
