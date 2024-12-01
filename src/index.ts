@@ -563,7 +563,7 @@ export default {
               returnContent = snapshot.parsed?.content;
               break;
             default:
-              returnContent = cleanHtml(snapshot.html, targetSelector);
+              returnContent = cleanHtml(snapshot, targetSelector);
               break;
           }
         }
