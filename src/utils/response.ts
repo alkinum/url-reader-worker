@@ -13,9 +13,9 @@ export const createErrorResponse = (message: string, code?: number, init?: Respo
 
 export const createFetchResponse = (res: Response, env?: Env) => {
   const cloned = res.clone();
-  
+
   const newHeaders = new Headers(cloned.headers);
-  
+
   newHeaders.set('Cache-Control', env?.CACHE_CONTROL || 'max-age=600');
   newHeaders.delete('Expires');
   newHeaders.delete('Last-Modified');
