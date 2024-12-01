@@ -3,7 +3,7 @@ import { extractText } from 'unpdf';
 import { protectPage } from 'puppeteer-afp';
 
 import TurndownService from '@backrunner/turndown';
-import puppeteer, { Browser } from '@cloudflare/puppeteer';
+import puppeteer, { Browser, Page } from '@cloudflare/puppeteer';
 import read from './utils/readability';
 
 import {
@@ -19,7 +19,7 @@ import {
 } from './constants/common';
 import { ERROR_CODE } from './constants/errors';
 import { PROTECTION_OPTIONS } from './constants/protection';
-import { EXECUTE_SNAPSHOT, INJECT_FUNCS, READABILITY_JS, STEALTH_PROTECTION, TURNSTILE_SOLVER, WORKER_PROTECTION } from './static/scripts';
+import { EXECUTE_SNAPSHOT, INJECT_FUNCS, MUTATION_IDLE_WATH, READABILITY_JS, STEALTH_PROTECTION, TURNSTILE_SOLVER, WORKER_PROTECTION } from './static/scripts';
 import { ImgBrief, PageSnapshot } from './types';
 import { cleanAttribute, checkSiteSafetyProtection } from './utils/crawler';
 import { wrapTurndown } from './utils/markdown';
@@ -280,6 +280,7 @@ export default {
 						page.evaluateOnNewDocument(STEALTH_PROTECTION),
             ...(mode === 'html' ? [] : [page.evaluateOnNewDocument(READABILITY_JS)]),
             page.evaluateOnNewDocument(WORKER_PROTECTION),
+						page.evaluateOnNewDocument(MUTATION_IDLE_WATH),
             page.evaluateOnNewDocument(INJECT_FUNCS),
             page.setViewport({
               width: 1920,
@@ -319,6 +320,33 @@ export default {
         let finalWaitStart = 0;
         let finalResolveCalled = false;
 
+				const snapshotChildFrames = async (page: Page) => {
+					const childFrames = page.mainFrame().childFrames();
+					const r = await Promise.all(childFrames.map(async (x) => {
+						const thisUrl = x.url();
+						if (!thisUrl || thisUrl === 'about:blank') {
+							return undefined;
+						}
+						try {
+							await Promise.all(
+								[
+									x.evaluate(STEALTH),
+									x.evaluate(STEALTH_PROTECTION),
+									...(mode === 'html' ? [] : [x.evaluate(READABILITY_JS)]),
+									x.evaluate(WORKER_PROTECTION),
+									x.evaluate(MUTATION_IDLE_WATH),
+									x.evaluate(INJECT_FUNCS),
+								]);
+								return await x.evaluate(`giveSnapshot()`);
+						} catch (error) {
+							console.warn(`Failed to snapshot child frame ${thisUrl}`, { err: error });
+							return undefined;
+						}
+					})) as PageSnapshot[];
+
+					return r.filter(Boolean);
+				}
+
         try {
           const earlyReturn = await new Promise<unknown | undefined>(async (resolve) => {
             // wait for the final snapshot event in 5s, it will be emitted multiple times
@@ -345,6 +373,10 @@ export default {
 
               snapshot = (await page.evaluate('giveSnapshot()')) as PageSnapshot;
               console.info('After page loaded snapshot fetched.');
+							const pSubFrameSnapshots = snapshotChildFrames(page);
+							if (snapshot) {
+								snapshot.childFrames = await pSubFrameSnapshots;
+							}
 
               if (snapshot?.html && !checkSiteSafetyProtection(targetUrl, snapshot.html)) {
                 page.evaluate(TURNSTILE_SOLVER);

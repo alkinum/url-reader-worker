@@ -30,4 +30,5 @@ export interface PageSnapshot {
   screenshot?: Buffer;
   imgs?: ImgBrief[];
   contentType?: string;
+	childFrames?: PageSnapshot[];
 }
