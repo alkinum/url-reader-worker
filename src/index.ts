@@ -7,10 +7,9 @@ import puppeteer, { Browser } from '@cloudflare/puppeteer';
 import read from './utils/readability';
 
 import {
-  BROWSER_ERROR_EARLY_FALLBACK_CACHE_TTL,
+	BROWSER_ERROR_EARLY_FALLBACK_CACHE_TTL,
   DEFAULT_BROWSER_USER_AGENT,
   DEFAULT_FETCH_CACHE_TTL,
-  DEFAULT_GOOGLE_WEBCACHE_ENDPOINT,
   DEFAULT_SALVAGE_USER_AGENT,
   DEFAULT_TIMEOUT,
   FALLBACK_TIMEOUT,
@@ -383,41 +382,6 @@ export default {
             }
 
             // === fallback methods ===
-            const salvage = async () => {
-              const googleArchiveUrl = `${
-                env.GOOGLE_WEB_CACHE_ENDPOINT || DEFAULT_GOOGLE_WEBCACHE_ENDPOINT
-              }?q=cache:${encodeURIComponent(targetUrl)}`;
-              const resp = await fetch(googleArchiveUrl, {
-                headers: {
-                  'User-Agent': getSalvageUserAgent(),
-                },
-              });
-              if (!resp.ok) {
-                return;
-              }
-              const html = await resp.text();
-              if (!checkSiteSafetyProtection(targetUrl, html)) {
-                return;
-              }
-              try {
-                snapshot = await new Promise((resolve, reject) => {
-                  if (mode === 'html') {
-                    read(html, function (err: any, article: any) {
-                      if (err || !article) return reject(err);
-                      resolve({
-                        title: article.title || '',
-                        text: article.text || '',
-                        html,
-                        href: article.url || '',
-                      });
-                    });
-                  }
-                });
-              } catch (error) {
-                console.error(error);
-              }
-            };
-
             const simulateScraper = async () => {
               const res = await fetch(targetUrl, {
                 headers: {
@@ -457,7 +421,6 @@ export default {
             ) {
               console.info('Need to return content earlier because of invalid snapshot.');
               const fallbackResList = await Promise.allSettled([
-                salvage(),
                 simulateScraper(),
                 fallback(),
                 new Promise<void>((resolve) => setTimeout(() => resolve(), FALLBACK_TIMEOUT)),
