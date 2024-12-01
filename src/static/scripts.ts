@@ -6,25 +6,101 @@ export const INJECT_FUNCS = `
 function briefImgs(elem) {
 	const imageTags = Array.from((elem || document).querySelectorAll('img[src]'));
 
+	let linkPreferredSrc = x.src;
+  if (linkPreferredSrc.startsWith('data:')) {
+    if (typeof x.dataset?.src === 'string' && !x.dataset.src.startsWith('data:')) {
+      linkPreferredSrc = x.dataset.src;
+    }
+  }
+
 	return imageTags.map((x)=> {
-		// do not include images without title or alt
-		if (!x.title || !x.alt) {
+		try {
+			return {
+				src:  new URL(linkPreferredSrc, document.baseURI).toString(),
+				loaded: x.complete,
+				width: x.width,
+				height: x.height,
+				naturalWidth: x.naturalWidth,
+				naturalHeight: x.naturalHeight,
+				alt: x.alt || x.title,
+			};
+		} catch {
 			return;
 		}
-		const src = x.src?.toLowerCase();
-    if (!src) {
-			return;
-		}
-		const imageItem = {
-			src,
-			loaded: x.complete,
-			width: x.width,
-			height: x.height,
-			naturalWidth: x.naturalWidth,
-			naturalHeight: x.naturalHeight,
-			alt: x.alt || x.title,
-		};
 	}).filter(Boolean);
+}
+
+function cloneAndExpandShadowRoots(rootElement = document.documentElement) {
+  // Create a shallow clone of the root element
+  const clone = rootElement.cloneNode(false);
+  // Function to process an element and its shadow root
+  function processShadowRoot(original, cloned) {
+    if (original.shadowRoot && original.shadowRoot.mode === 'open') {
+      shadowDomPresents = true;
+      const shadowContent = document.createDocumentFragment();
+
+      // Clone shadow root content normally
+      original.shadowRoot.childNodes.forEach(childNode => {
+        const clonedNode = childNode.cloneNode(true);
+        shadowContent.appendChild(clonedNode);
+      });
+
+      // Handle slots
+      const slots = shadowContent.querySelectorAll('slot');
+      slots.forEach(slot => {
+        const slotName = slot.getAttribute('name') || '';
+        const assignedElements = original.querySelectorAll(
+          slotName ? \`[slot="\${slotName}"]\` : ':not([slot])'
+        );
+
+        if (assignedElements.length > 0) {
+          const slotContent = document.createDocumentFragment();
+          assignedElements.forEach(el => {
+            const clonedEl = el.cloneNode(true);
+            slotContent.appendChild(clonedEl);
+          });
+          slot.parentNode.replaceChild(slotContent, slot);
+        } else if (!slotName) {
+          // Keep default slot content
+          // No need to do anything as it's already cloned
+        }
+      });
+
+      cloned.appendChild(shadowContent);
+    }
+  }
+
+  // Use a TreeWalker on the original root to clone the entire structure
+  const treeWalker = document.createTreeWalker(
+    rootElement,
+    NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT
+  );
+
+  const elementMap = new Map([[rootElement, clone]]);
+
+  let currentNode;
+  while (currentNode = treeWalker.nextNode()) {
+    const parentClone = elementMap.get(currentNode.parentNode);
+    const clonedNode = currentNode.cloneNode(false);
+    parentClone.appendChild(clonedNode);
+
+    if (currentNode.nodeType === Node.ELEMENT_NODE) {
+      elementMap.set(currentNode, clonedNode);
+      processShadowRoot(currentNode, clonedNode);
+    }
+  }
+
+  return clone;
+}
+
+function shadowDomPresent(rootElement = document.documentElement) {
+  const elems = rootElement.querySelectorAll('*');
+  for (const x of elems) {
+    if (x.shadowRoot && x.shadowRoot.mode === 'open') {
+      return true;
+    }
+  }
+  return false;
 }
 
 function giveSnapshot() {
@@ -36,27 +112,36 @@ function giveSnapshot() {
 		void 0;
 	}
 
-	const r = {
-		title: document.title,
-		href: document.location.href,
-		html: document.documentElement?.outerHTML,
-		text: document.body?.innerText,
-		parsed: parsed,
-		imgs: [],
-	};
-	if (parsed && parsed.content) {
-		const elem = document.createElement('div');
-		elem.innerHTML = parsed.content;
-		r.imgs = briefImgs(elem);
-	} else {
-		const allImgs = briefImgs();
-		if (allImgs.length === 1) {
-			r.imgs = allImgs;
-		}
-	}
+  const r = {
+    title: document.title,
+    description: document.head?.querySelector('meta[name="description"]')?.getAttribute('content') ?? '',
+    href: document.location.href,
+    html: document.documentElement?.outerHTML,
+    text: document.body?.innerText,
+    shadowExpanded: shadowDomPresent() ? cloneAndExpandShadowRoots()?.outerHTML : undefined,
+    parsed,
+    imgs: [],
+  };
+
+  if (document.baseURI !== r.href) {
+    r.rebase = document.baseURI;
+  }
+  if (parsed && parsed.content) {
+    const elem = document.createElement('div');
+    elem.innerHTML = parsed.content;
+    r.imgs = briefImgs(elem);
+  } else {
+    const allImgs = briefImgs();
+    if (allImgs.length === 1) {
+      r.imgs = allImgs;
+    }
+  }
 
 	return r;
 }
+
+window.giveSnapshot = giveSnapshot;
+window.briefImgs = briefImgs;
 `.trim();
 
 export const EXECUTE_SNAPSHOT = `
