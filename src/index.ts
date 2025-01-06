@@ -458,10 +458,14 @@ export default {
                 fallback(),
                 new Promise<void>((resolve) => setTimeout(() => resolve(), FALLBACK_TIMEOUT)),
               ]);
-              const earlyReturnRes = fallbackResList.find((item: any) => item.status === 'fulfilled' && !!item.value);
-              if (earlyReturnRes) {
+              const earlyReturnRes = fallbackResList.find((item: PromiseSettledResult<string | void | undefined>) => 
+                item.status === 'fulfilled' && 
+                typeof (item as PromiseFulfilledResult<string>).value === 'string' && 
+                !!(item as PromiseFulfilledResult<string>).value
+              );
+              if (earlyReturnRes && earlyReturnRes.status === 'fulfilled' && earlyReturnRes.value) {
                 console.info('Early return resolved.');
-                resolve(earlyReturnRes);
+                resolve(earlyReturnRes.value);
                 return;
               }
             }
