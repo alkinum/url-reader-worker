@@ -3,6 +3,7 @@ name = "url-reader-worker"
 main = "src/index.ts"
 compatibility_date = "2024-05-02"
 compatibility_flags = ["nodejs_compat"]
+logpush = true
 
 # Automatically place your workloads in an optimal location to minimize latency.
 # If you are running back-end logic in a Worker, running it closer to your back-end infrastructure
@@ -17,12 +18,15 @@ mode = "smart"
 # Note: Use secrets to store sensitive data.
 # - https://developers.cloudflare.com/workers/configuration/secrets/
 [vars]
-CACHE_CONTROL = "max-age=600"
+CACHE_CONTROL = "max-age=1800"
 BROWSER_TIMEOUT = 30000
-FETCH_CACHE_TTL = 300
+FETCH_CACHE_TTL = 600
 BROWSER_USER_AGENT = ""
 SALVAGE_USER_AGENT = ""
 AUTH_KEY = ""
+
+[observability.logs]
+enabled = true
 
 # Bind the Workers AI model catalog. Run machine learning models, powered by serverless GPUs, on Cloudflare’s global network
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#workers-ai
