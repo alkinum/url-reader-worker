@@ -6,14 +6,13 @@ export const INJECT_FUNCS = `
 function briefImgs(elem) {
 	const imageTags = Array.from((elem || document).querySelectorAll('img[src]'));
 
-	let linkPreferredSrc = x.src;
-  if (linkPreferredSrc.startsWith('data:')) {
-    if (typeof x.dataset?.src === 'string' && !x.dataset.src.startsWith('data:')) {
-      linkPreferredSrc = x.dataset.src;
-    }
-  }
-
 	return imageTags.map((x)=> {
+  	let linkPreferredSrc = x.src;
+    if (linkPreferredSrc.startsWith('data:')) {
+      if (typeof x.dataset?.src === 'string' && !x.dataset.src.startsWith('data:')) {
+        linkPreferredSrc = x.dataset.src;
+      }
+    }
 		try {
 			return {
 				src:  new URL(linkPreferredSrc, document.baseURI).toString(),

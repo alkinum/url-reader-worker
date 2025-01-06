@@ -41,6 +41,7 @@ export default {
       return createErrorResponse('Invalid request headers', ERROR_CODE.INVALID_HEADERS, { status: 400 });
     }
 
+    // user agent blacklist
     if (/(netcraft\.com)|NetcraftSurveyAgent/.test(userAgent)) {
       return createErrorResponse('Abuse detected', ERROR_CODE.ABUSE, { status: 403 });
     }
@@ -155,7 +156,6 @@ export default {
         // settings getters
         const getTimeout = () => env.BROWSER_TIMEOUT || DEFAULT_TIMEOUT;
         const getUserAgent = () => env.BROWSER_USER_AGENT || DEFAULT_BROWSER_USER_AGENT;
-        const getSalvageUserAgent = () => env.SALVAGE_USER_AGENT || DEFAULT_SALVAGE_USER_AGENT;
 
         const fallback = async () => {
           let fallbackMode = 'markdown';
