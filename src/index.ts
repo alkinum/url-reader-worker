@@ -151,7 +151,7 @@ export default {
         }
 
         // use puppeteer to render html
-        const sessionId = await this.getRandomSession(env.READER_BROWSER as any);
+        const sessionId = await this.getRandomSession(env.READER_BROWSER);
 
         // settings getters
         const getTimeout = () => env.BROWSER_TIMEOUT || DEFAULT_TIMEOUT;
